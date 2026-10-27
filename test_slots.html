@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>slot scan fixture</title></head>
+<body>
+  <!-- single quote attributes, accept before type -->
+  <label for="doc">预览文档</label>
+  <input type="text" id="notafile">
+  <input accept='.docx,.doc,.pdf' type="file" id="doc" data-htmlbg-key="doc">
+
+  <!-- multiple, id missing so the name is used, accept after type -->
+  <input type="file" multiple name="sheet" accept=".csv,.xlsx">
+
+  <!-- no key at all -> file3 ; UPPERCASE TYPE -->
+  <input TYPE="file">
+</body>
+</html>

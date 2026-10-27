@@ -1,0 +1,448 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>高考倒计时 + 文档滚动预览</title>
+<link rel="stylesheet" href="../styles.css">
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: transparent; color: #fff;
+    font-family: "Microsoft YaHei UI", "Microsoft YaHei", system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  body::before {
+    /* keeps text readable whatever the wallpaper behind is doing */
+    content: ""; position: fixed; inset: 0;
+    background: radial-gradient(1200px 700px at 20% 15%, rgba(0,0,0,.34), transparent 70%);
+    pointer-events: none;
+  }
+
+  /* ---------------- layout magnets ----------------
+     The panel is dropped into one of nine slots and given one of five sizes, both
+     chosen in the settings window (this page cannot be clicked).            */
+  #dock {
+    position: fixed; display: flex; flex-direction: column;
+    width: 38vw; height: 62vh;
+    padding: 18px 20px 16px; box-sizing: border-box; gap: 14px;
+    border-radius: 20px;
+    background: linear-gradient(160deg, rgba(22,20,44,.62), rgba(12,11,26,.52));
+    border: 1px solid rgba(255,255,255,.14);
+    box-shadow: 0 24px 70px rgba(0,0,0,.42), inset 0 1px 0 rgba(255,255,255,.10);
+    backdrop-filter: blur(18px) saturate(140%);
+    -webkit-backdrop-filter: blur(18px) saturate(140%);
+  }
+  #dock.s-xs { width: 22vw; height: 30vh; padding: 12px 14px; border-radius: 16px; }
+  #dock.s-sm { width: 30vw; height: 44vh; padding: 15px 17px; }
+  #dock.s-md { width: 38vw; height: 62vh; }
+  #dock.s-lg { width: 48vw; height: 76vh; }
+  #dock.s-xl { width: 62vw; height: 88vh; }
+
+  #dock.p-left-top    { left: 3vw;  top: 4vh; }
+  #dock.p-center-top  { left: 50%;  top: 4vh; transform: translateX(-50%); }
+  #dock.p-right-top   { right: 3vw; top: 4vh; }
+  #dock.p-left-center { left: 3vw;  top: 50%; transform: translateY(-50%); }
+  #dock.p-center      { left: 50%;  top: 50%; transform: translate(-50%, -50%); }
+  #dock.p-right-center{ right: 3vw; top: 50%; transform: translateY(-50%); }
+  #dock.p-left-bottom { left: 3vw;  bottom: 5vh; }
+  #dock.p-center-bottom{ left: 50%; bottom: 5vh; transform: translateX(-50%); }
+  #dock.p-right-bottom{ right: 3vw; bottom: 5vh; }
+
+  /* ---------------- countdown ---------------- */
+  #count { flex: 0 0 auto; text-align: center; }
+  #cdLabel { font-size: clamp(11px, 1.05vw, 15px); letter-spacing: .32em; opacity: .72; }
+  #cdDays {
+    margin: 2px 0 0; font-weight: 800; line-height: 1;
+    font-size: clamp(34px, 7vw, 96px);
+    background: linear-gradient(180deg, #fff, var(--accent, #7c5cff));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    text-shadow: 0 10px 40px rgba(124,92,255,.32);
+    font-variant-numeric: tabular-nums;
+  }
+  #cdDays small { font-size: .28em; letter-spacing: .18em; margin-left: .35em; -webkit-text-fill-color: rgba(255,255,255,.82); }
+  #cdClock { font-size: clamp(13px, 1.5vw, 22px); font-variant-numeric: tabular-nums; opacity: .92; letter-spacing: .12em; }
+  #cdSub { margin-top: 6px; font-size: clamp(10px, .95vw, 13px); opacity: .58; }
+  #cdBadge {
+    display: inline-block; margin-top: 8px; padding: 3px 12px; border-radius: 999px;
+    font-size: clamp(10px, .9vw, 12px); letter-spacing: .1em;
+    background: rgba(124,92,255,.22); border: 1px solid rgba(124,92,255,.42); color: #d8ccff;
+  }
+  #dock.s-xs #cdDays, #dock.s-sm #cdDays { font-size: clamp(28px, 5.2vw, 62px); }
+
+  /* ---------------- document reader ---------------- */
+  #reader {
+    flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
+    border-radius: 14px; overflow: hidden;
+    background: rgba(255,255,255,.045); border: 1px solid rgba(255,255,255,.09);
+  }
+  #docHead {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 10px;
+    padding: 8px 12px; font-size: clamp(11px, 1vw, 13px);
+    background: rgba(0,0,0,.24); border-bottom: 1px solid rgba(255,255,255,.08);
+  }
+  #docName { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .9; }
+  #docMeta { flex: 0 0 auto; opacity: .55; font-size: .92em; white-space: nowrap; }
+  #progWrap { flex: 0 0 auto; height: 2px; background: rgba(255,255,255,.10); }
+  #progBar { height: 100%; width: 0%; background: var(--accent, #7c5cff); box-shadow: 0 0 12px var(--accent, #7c5cff); }
+
+  #doc { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+  #docInner { padding: 14px clamp(14px, 1.4vw, 22px) 42vh; will-change: transform; }
+  #doc.fade::after {
+    content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 68px;
+    background: linear-gradient(180deg, transparent, rgba(14,12,30,.55)); pointer-events: none;
+  }
+  .d-h { color: var(--accent, #7c5cff); font-weight: 700; margin: 22px 0 8px; letter-spacing: .02em; }
+  .d-h1 { font-size: 1.55em; } .d-h2 { font-size: 1.32em; }
+  .d-h3 { font-size: 1.16em; } .d-h4, .d-h5, .d-h6 { font-size: 1.05em; }
+  .d-p { margin: 0 0 .72em; line-height: 1.72; opacity: .92; word-break: break-word; white-space: pre-wrap; }
+  .d-li { padding-left: 1.2em; position: relative; }
+  .d-li::before { content: "\2022"; position: absolute; left: .25em; color: var(--accent, #7c5cff); }
+  .d-sec {
+    margin: 26px 0 10px; padding: 4px 12px; display: inline-block; border-radius: 999px;
+    font-weight: 700; letter-spacing: .08em;
+    background: rgba(124,92,255,.16); border: 1px solid rgba(124,92,255,.34); color: #cfc2ff;
+  }
+  .d-rowish { border-bottom: 1px dashed rgba(255,255,255,.08); }
+  .d-blank { height: .6em; }
+  .d-note { margin: 10px 0; padding: 8px 12px; border-radius: 10px; background: rgba(255,176,32,.14); border: 1px solid rgba(255,176,32,.34); color: #ffd89a; }
+  #docImg { max-width: 100%; max-height: 100%; display: block; margin: 0 auto; object-fit: contain; }
+
+  #hint {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    text-align: center; padding: 8px 18px; line-height: 1.9; opacity: .66; font-size: clamp(11px, 1.05vw, 14px);
+  }
+  #hint b { color: var(--accent, #7c5cff); }
+
+  /* visible only when this file is opened on its own (testing / solo use) */
+  #tools { display: none; position: fixed; right: 12px; bottom: 12px; gap: 6px; z-index: 9; }
+  body.solo #tools { display: flex; }
+  body.solo #pickdoc { display: inline-block; }
+  #tools input, #tools button, #tools select {
+    font: inherit; font-size: 12px; color: #fff; background: rgba(30,26,58,.92);
+    border: 1px solid rgba(255,255,255,.16); border-radius: 8px; padding: 4px 8px;
+  }
+  #pickdoc { display: none; }
+  #doc { display: block; }
+
+  /* On the desktop the page cannot be clicked, so the input is a pure sink: the host
+     writes the File into it.  Solo (opened on its own in a browser) shows it. */
+  #doc {
+    position: fixed; left: -200px; top: -200px; width: 1px; height: 1px;
+    opacity: 0; pointer-events: none;
+  }
+  body.solo #doc {
+    position: static; opacity: 1; pointer-events: auto;
+    width: auto; height: auto; left: auto; top: auto;
+  }
+</style>
+</head>
+<body>
+
+<!-- The document slot.  The desktop version cannot be clicked, so the file is bound
+     in the SETTINGS window; the host drops it into this input as a real File. -->
+<input type="file" id="doc" data-htmlbg-key="doc" data-htmlbg-label="预览文档"
+       accept=".docx,.doc,.pdf,.pptx,.ppt,.xlsx,.xlsm,.xls,.csv,.tsv,.txt,.md,.json,.xml,.png,.jpg,.jpeg,.gif,.webp,.mp4,.mp3">
+
+<div id="dock" class="p-right-center s-md">
+  <div id="count">
+    <div id="cdLabel">距离高考</div>
+    <div id="cdDays">—<small>天</small></div>
+    <div id="cdClock">--:--:--</div>
+    <div id="cdSub"></div>
+    <div id="cdBadge">高考倒计时</div>
+  </div>
+
+  <div id="reader">
+    <div id="docHead"><span id="docName">未载入文档</span><span id="docMeta"></span></div>
+    <div id="progWrap"><div id="progBar"></div></div>
+    <div id="doc" class="fade">
+      <div id="docInner"></div>
+      <div id="hint">还没有选择文档。<br>在<b>设置窗口 → 文件导入</b>里给「预览文档」选一个文件即可。</div>
+    </div>
+  </div>
+</div>
+
+<div id="tools">
+  <input type="date" id="tDate" title="考试日期">
+  <input type="range" id="tFont" min="12" max="40" step="1" title="字号">
+  <input type="range" id="tSpeed" min="0" max="120" step="1" title="滚动速度">
+  <select id="tPos">
+    <option value="left-top">左上</option><option value="center-top">上中</option><option value="right-top">右上</option>
+    <option value="left-center">左中</option><option value="center">正中</option><option value="right-center" selected>右中</option>
+    <option value="left-bottom">左下</option><option value="center-bottom">下中</option><option value="right-bottom">右下</option>
+  </select>
+  <select id="tSize">
+    <option value="xs">极小</option><option value="sm">小</option>
+    <option value="md" selected>中</option><option value="lg">大</option><option value="xl">极大</option>
+  </select>
+  <button id="pickdoc" type="button">选择文档</button>
+</div>
+
+<script src="docs.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  var $ = function (id) { return document.getElementById(id); };
+  var solo = window.parent === window;
+  if (solo) document.body.classList.add("solo");
+
+  var DEFAULTS = {
+    id: "exam-dock", examDate: "2027-06-07", docPath: "", fontSize: 22,
+    scrollSpeed: 26, showCountdown: true, label: "距离高考",
+    pos: "right-center", size: "md", paused: false
+  };
+  var P = Object.assign({}, DEFAULTS);
+  var LOCAL_KEY = "htmlbg-preset-exam-dock-v1";
+
+  var input = $("doc");
+  var inner = $("docInner");
+  var box = $("doc");
+
+  // ------------------------------------------------------------------ config ----
+  function applyPreset(p) {
+    if (!p) return;
+    P = Object.assign({}, DEFAULTS, p);
+    if (P.accent) document.documentElement.style.setProperty("--accent", P.accent);
+    $("count").style.display = P.showCountdown ? "" : "none";
+    $("cdLabel").textContent = P.label || DEFAULTS.label;
+    var dock = $("dock");
+    dock.className = "p-" + (P.pos || "right-center") + " s-" + (P.size || "md");
+    inner.style.fontSize = (P.fontSize || 22) + "px";
+    scroller.setPaused(!!P.paused);
+    if (solo) {
+      $("tDate").value = P.examDate || "";
+      $("tFont").value = P.fontSize;
+      $("tSpeed").value = P.scrollSpeed;
+      $("tPos").value = P.pos;
+      $("tSize").value = P.size;
+    }
+    tickCountdown();
+  }
+
+  function ask(kind, payload) {
+    try { window.parent.postMessage({ htmlbg: { kind: kind, payload: payload || "" } }, "*"); } catch (e) {}
+  }
+
+  // --------------------------------------------------------------- countdown ----
+  var WEEK = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
+  function pad(n) { return n < 10 ? "0" + n : String(n); }
+
+  function target() {
+    var s = String(P.examDate || DEFAULTS.examDate).trim();
+    var m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(s);
+    if (!m) return null;
+    return new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10), 8, 0, 0, 0);
+  }
+
+  function tickCountdown() {
+    var t = target();
+    if (!t) { $("cdDays").innerHTML = "—<small>天</small>"; $("cdSub").textContent = "日期格式应为 YYYY-MM-DD"; return; }
+    var ms = t.getTime() - Date.now();
+    var past = ms < 0;
+    ms = Math.abs(ms);
+    var days = Math.floor(ms / 86400000);
+    var h = Math.floor(ms % 86400000 / 3600000);
+    var mi = Math.floor(ms % 3600000 / 60000);
+    var se = Math.floor(ms % 60000 / 1000);
+    $("cdDays").innerHTML = days + "<small>天</small>";
+    $("cdClock").textContent = pad(h) + ":" + pad(mi) + ":" + pad(se);
+    $("cdSub").textContent = "目标 " + t.getFullYear() + "-" + pad(t.getMonth() + 1) + "-" + pad(t.getDate()) +
+      " 08:00 " + WEEK[t.getDay()];
+    $("cdBadge").textContent = past
+      ? (P.label || "高考") + "已过去"
+      : (days === 0 ? "就是今天" : days < 30 ? "冲刺阶段" : days < 100 ? "百日冲刺" : "高考倒计时");
+  }
+  tickCountdown();
+  setInterval(tickCountdown, 1000);
+
+  // ------------------------------------------------------------------ reader ----
+  function setHint(msg) {
+    var el = $("hint");
+    el.style.display = msg ? "flex" : "none";
+    if (msg) el.innerHTML = msg;
+  }
+
+  function render(doc) {
+    setHint("");
+    $("docName").textContent = doc.name || "文档";
+    var meta = [];
+    if (doc.ext) meta.push(doc.ext.toUpperCase());
+    if (doc.meta && doc.meta.pages) meta.push(doc.meta.pages + " 页");
+    if (doc.meta && doc.meta.slides) meta.push(doc.meta.slides + " 页幻灯片");
+    if (doc.meta && doc.meta.sheets) meta.push(doc.meta.sheets + " 个工作表");
+    if (doc.truncated) meta.push("已截断");
+    $("docMeta").textContent = meta.join(" · ");
+    inner.innerHTML = "";
+
+    if (doc.kind === "image") {
+      var img = document.createElement("img");
+      img.id = "docImg"; img.src = doc.dataUrl; img.alt = doc.name || "";
+      inner.appendChild(img);
+      scroller.reset();
+      return;
+    }
+    if (doc.kind === "video" || doc.kind === "audio") {
+      var md = document.createElement(doc.kind);
+      md.src = doc.dataUrl; md.loop = true; md.muted = true; md.autoplay = (doc.kind === "video");
+      md.style.cssText = "max-width:100%;max-height:100%;display:block;margin:0 auto";
+      inner.appendChild(md);
+      if (doc.kind === "video") { try { md.play(); } catch (e) {} }
+      scroller.reset();
+      return;
+    }
+
+    if (doc.note) {
+      var n = document.createElement("div");
+      n.className = "d-note"; n.textContent = doc.note;
+      inner.appendChild(n);
+    }
+    (doc.blocks || []).forEach(function (b) {
+      var el;
+      if (b.tag === "sheet" || b.tag === "slide" || b.tag === "page") {
+        el = document.createElement("div"); el.className = "d-sec"; el.textContent = b.text;
+      } else if (b.level && b.level > 0) {
+        el = document.createElement("div"); el.className = "d-h d-h" + b.level; el.textContent = b.text;
+      } else if (!b.text) {
+        el = document.createElement("div"); el.className = "d-blank";
+      } else {
+        el = document.createElement("div");
+        el.className = "d-p" + (b.list ? " d-li" : "") + (String(b.text).indexOf("  |  ") > 0 ? " d-rowish" : "");
+        el.textContent = b.text;
+      }
+      inner.appendChild(el);
+    });
+    scroller.reset();
+  }
+
+  // ---------------------------------------------------------------- scroll ------
+  var scroller = (function () {
+    var y = 0, holdUntil = 0, last = 0, paused = false, hovering = false;
+    function tick(ts) {
+      requestAnimationFrame(tick);
+      var dt = last ? (ts - last) / 1000 : 0;
+      last = ts;
+      if (dt > 0.1 || paused || hovering) return;
+      if (!inner.firstChild) return;
+      var speed = Number(P.scrollSpeed) || 0;
+      if (!speed) return;
+      if (ts < holdUntil) return;
+      var max = Math.max(0, inner.scrollHeight - box.clientHeight);
+      y += speed * dt;
+      if (y >= max) { y = 0; holdUntil = ts + 1400; }
+      inner.style.transform = "translateY(" + (-y) + "px)";
+      $("progBar").style.width = (max > 0 ? (y / max) * 100 : 0).toFixed(1) + "%";
+    }
+    requestAnimationFrame(tick);
+    return {
+      reset: function () { y = 0; holdUntil = 0; inner.style.transform = "translateY(0)"; $("progBar").style.width = "0%"; },
+      setPaused: function (v) { paused = !!v; },
+      toggle: function () { paused = !paused; },
+      setHover: function (v) { hovering = !!v; }
+    };
+  })();
+
+  box.addEventListener("mouseenter", function () { scroller.setHover(true); });
+  box.addEventListener("mouseleave", function () { scroller.setHover(false); });
+  box.addEventListener("click", function () { scroller.toggle(); });
+
+  // ------------------------------------------------------------- loading -------
+  function reportDoc(ok, name, size, detail, stage) {
+    if (solo) return;
+    try {
+      ask("filestatus", JSON.stringify({
+        key: "doc", ok: !!ok, name: name || "", size: size || 0,
+        stage: stage || "", error: ok ? "" : (detail || "")
+      }));
+    } catch (e) {}
+  }
+
+  function loadFile(file) {
+    if (!file) return;
+    reportDoc(true, file.name, file.size, "", "loadstart");
+    $("docMeta").textContent = "读取中…";
+    try {
+      if (!window.HTMLBGDocs) throw new Error("docs.js 未加载");
+      window.HTMLBGDocs.read(file).then(function (doc) {
+        render(doc);
+        reportDoc(true, doc && doc.name, file.size, "", "rendered " + (doc && doc.blocks ? doc.blocks.length : 0) + " 段");
+      }).catch(function (err) {
+        var msg = String((err && err.message) || err || "读取失败");
+        $("docName").textContent = file.name;
+        $("docMeta").textContent = "读取失败";
+        inner.innerHTML = "";
+        setHint("<b>" + msg.replace(/</g, "&lt;") + "</b>");
+        reportDoc(false, file.name, file.size, msg, "parsefail");
+      });
+    } catch (err) {
+      var msg2 = String((err && err.message) || err || "读取失败");
+      $("docMeta").textContent = "读取失败";
+      setHint("<b>" + msg2.replace(/</g, "&lt;") + "</b>");
+      reportDoc(false, file.name, file.size, msg2, "loadfail");
+    }
+  }
+
+  var lastSig = "";
+  function putFile(file) {
+    // Used by the browser preview: File objects clone across postMessage, so the host
+    // (or any parent frame) can hand us a file even from another origin.
+    try {
+      var dt = new DataTransfer();
+      dt.items.add(file);
+      input.files = dt.files;
+    } catch (e) {
+      return false;
+    }
+    lastSig = "";
+    syncFile();
+    return true;
+  }
+
+  function syncFile() {
+    if (input.files && input.files.length) {
+      var f = input.files[0];
+      var sig = f.name + "|" + f.size + "|" + f.lastModified;
+      if (sig !== lastSig) { lastSig = sig; loadFile(f); }
+    }
+  }
+  input.addEventListener("change", function () {
+    lastSig = "";
+    syncFile();
+  });
+  window.addEventListener("load", syncFile);
+
+  // -------------------------------------------------- host / parent protocol ----
+  window.addEventListener("message", function (e) {
+    var d = e && e.data;
+    if (!d || !d.htmlbg) return;
+    var m = d.htmlbg;
+    if (m.type === "config") {
+      applyPreset(m.preset);
+      setTimeout(syncFile, 80);
+    } else if (m.type === "file" && m.file) {
+      putFile(m.file);
+    }
+  });
+
+  if (solo) {
+    try {
+      var saved = JSON.parse(localStorage.getItem(LOCAL_KEY) || "null");
+      if (saved) applyPreset(saved);
+    } catch (e) {}
+    function save() { try { localStorage.setItem(LOCAL_KEY, JSON.stringify(P)); } catch (e) {} }
+    $("tDate").addEventListener("input", function () { P.examDate = $("tDate").value; save(); tickCountdown(); });
+    $("tFont").addEventListener("input", function () { P.fontSize = +$("tFont").value; inner.style.fontSize = P.fontSize + "px"; save(); });
+    $("tSpeed").addEventListener("input", function () { P.scrollSpeed = +$("tSpeed").value; save(); });
+    $("tPos").addEventListener("change", function () { P.pos = $("tPos").value; applyPreset(P); save(); });
+    $("tSize").addEventListener("change", function () { P.size = $("tSize").value; applyPreset(P); save(); });
+    $("pickdoc").addEventListener("click", function () { input.click(); });
+    setHint("还没选择文档。<br>点右下角「<b>选择文档</b>」挑一个文件试试。");
+  } else {
+    ask("hello", "");
+  }
+
+  applyPreset(P);
+})();
+</script>
+</body>
+</html>

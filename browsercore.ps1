@@ -41,12 +41,29 @@ $script:BC = @{
   LastError = ''
 }
 
+function Resolve-ProgramRoot {
+  # %ProgramFiles% / %ProgramFiles(x86)% can legitimately be missing - system services,
+  # scheduled tasks and stripped-down hosts run without a full user environment.  Derive
+  # the folders from the drive Windows actually lives on instead of trusting env vars.
+  param([switch]$X86)
+  $name = if ($X86) { 'Program Files (x86)' } else { 'Program Files' }
+  $envVar = if ($X86) { ${env:ProgramFiles(x86)} } else { $env:ProgramFiles }
+  if ($envVar) { $c = @($envVar) } else { $c = @() }
+  $drive = $env:SystemDrive
+  if (-not $drive) { $drive = $env:SystemRoot }
+  if (-not $drive) { $drive = 'C:' }
+  $drive = $drive.TrimEnd('\')
+  $c += ($drive + '\' + $name)
+  foreach ($p in $c) { if ($p -and (Test-Path -LiteralPath $p)) { return $p } }
+  return [string]($c | Select-Object -First 1)
+}
+
 function Find-WebView2Runtime {
   # The runtime registers itself under a GUID key; the files live in
   # %ProgramFiles(x86)%\Microsoft\EdgeWebView\Application\<version>\.
   $guid = '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
-  $roots = @("$env:ProgramFiles (x86)\Microsoft\EdgeWebView\Application",
-             "$env:ProgramFiles\Microsoft\EdgeWebView\Application")
+  $roots = @((Join-Path (Resolve-ProgramRoot -X86) 'Microsoft\EdgeWebView\Application'),
+             (Join-Path (Resolve-ProgramRoot) 'Microsoft\EdgeWebView\Application'))
   foreach ($k in @("HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\$guid",
                    "HKLM:\SOFTWARE\Microsoft\EdgeUpdate\Clients\$guid",
                    "HKCU:\SOFTWARE\Microsoft\EdgeUpdate\Clients\$guid")) {
@@ -100,7 +117,7 @@ function Initialize-BrowserEngine {
         $BC.Engine = 'webview2'
         return 'webview2'
       }
-      $BC.LastError = "WebView2 SDK loaded but no runtime found in $rt"
+      $BC.LastError = ('WebView2 SDK loaded but no runtime under ' + ($roots -join ' / '))
     } catch {
       $BC.LastError = "WebView2 init failed: $($_.Exception.Message)"
     }
@@ -293,6 +310,12 @@ function Update-BrowserWindows {
           $s.AreDefaultContextMenusEnabled = $false
           $s.IsStatusBarEnabled = $false
         } catch { $rec.Failed = $true; $rec.Error = "settings: $($_.Exception.Message)"; continue }
+        # Hook point for the caller (installs the injected page script / file
+        # interception) - must happen before the first navigation.
+        if ($script:OnCoreReady) {
+          try { & $script:OnCoreReady $rec.View.CoreWebView2 }
+          catch { Write-Host "core hook failed: $($_.Exception.Message)" }
+        }
       }
       # Show BEFORE navigating: Chromium/IE paint nothing until the window is
       # visible.  SW_SHOWNOACTIVATE so it does not steal focus from the user.

@@ -30,7 +30,20 @@
       display: { scale: 1, opacity: 1, background: "#0a0a12" },
       behavior: { reloadMinutes: 0, hideCursor: false, clickThrough: false },
       ui: { theme: "dark", accent: "#7c5cff" },
-      widget: { showClock: true }
+      widget: { showClock: true },
+      preset: {
+        id: "",
+        examDate: "2027-06-07",
+        docPath: "",
+        fontSize: 22,
+        scrollSpeed: 26,
+        showCountdown: true,
+        label: "距离高考",
+        pos: "right-center",
+        size: "md",
+        paused: false
+      },
+      files: {}
     };
   }
 
@@ -130,6 +143,240 @@
     applyDisplay();
     applyBehavior();
     applyUI();
+    pushPresetToIframe();
+  }
+
+  // ---------- 预设页面（iframe 里的 presets/*.html） ----------
+  // 桌面版由 PowerShell 宿主读文件；预览版在浏览器里，只能由本页代为选择/解析，
+  // 然后按同一套 postMessage 协议回给预设页。
+  var pendingToIframe = [];
+
+  function pushPresetToIframe() {
+    var msg = {
+      type: "config",
+      preset: state.preset || null,
+      meta: { accent: state.ui.accent }
+    };
+    pendingToIframe.push(msg);
+    try {
+      if (frame.contentWindow) frame.contentWindow.postMessage({ htmlbg: msg }, "*");
+    } catch (e) {}
+  }
+
+  frame.addEventListener("load", function () {
+    var out = pendingToIframe.splice(0);
+    out.forEach(function (m) {
+      try { frame.contentWindow.postMessage({ htmlbg: m }, "*"); } catch (e) {}
+    });
+  });
+
+  window.addEventListener("message", function (e) {
+    var d = e.data;
+    if (!d || !d.htmlbg || !d.htmlbg.kind) return;
+    var m = d.htmlbg;
+
+    if (m.kind === "presetset") {
+      try {
+        var p = JSON.parse(m.payload);
+        state.preset = Object.assign({}, state.preset || {}, p);
+        syncPreset();
+        save();
+      } catch (err) {}
+      return;
+    }
+    if (m.kind === "pickfile") {
+      // The browser cannot hand out disk paths, so open a real file dialog and pass
+      // the File itself into the iframe (File clones across postMessage).
+      pendingKey = m.payload || "doc";
+      if ($("docPick")) $("docPick").click();
+      return;
+    }
+    if (m.kind === "slots") {
+      try {
+        var sd = JSON.parse(m.payload || "{}");
+        detectedSlots = sd.slots || [];
+        renderFileSlots();
+      } catch (err) {}
+      return;
+    }
+    if (m.kind === "filestatus") {
+      try {
+        var st = JSON.parse(m.payload || "{}");
+        if (st.key) setSlotStatus(st.key, st.ok ? "已载入" : (st.error || "失败"), st.ok ? "ok" : "bad");
+      } catch (err) {}
+      return;
+    }
+  });
+
+  // ---------- 文件导入槽（浏览器版：由 <input type=file> 直接给文件） ----------
+  var detectedSlots = [];
+  var pendingKey = "doc";
+
+  function setSlotStatus(key, text, cls) {
+    var el = document.querySelector('#fileSlots [data-key="' + String(key).replace(/"/g, '\\"') + '"] .slot-state');
+    if (el) { el.textContent = text; el.className = "slot-state " + (cls || ""); }
+  }
+
+  function renderFileSlots() {
+    var box = $("fileSlots");
+    if (!box) return;
+    box.innerHTML = "";
+    if (!detectedSlots.length) {
+      var none = document.createElement("p");
+      none.className = "hint";
+      none.textContent = "当前页面没有检测到文件导入点。";
+      box.appendChild(none);
+      return;
+    }
+    detectedSlots.forEach(function (s) {
+      var row = document.createElement("div");
+      row.className = "slot-item";
+      row.setAttribute("data-key", s.key);
+
+      var info = document.createElement("div");
+      info.className = "slot-info";
+      var nm = document.createElement("div");
+      nm.className = "slot-name";
+      nm.textContent = s.label || s.key;
+      var path = document.createElement("div");
+      path.className = "slot-path";
+      path.textContent = (state.files && state.files[s.key]) || "未选择文件";
+      info.appendChild(nm);
+      info.appendChild(path);
+
+      var stEl = document.createElement("div");
+      stEl.className = "slot-state";
+
+      var acts = document.createElement("div");
+      acts.className = "slot-actions";
+      var pick = document.createElement("button");
+      pick.className = "btn tiny";
+      pick.textContent = "选择文件";
+      pick.addEventListener("click", function () { pendingKey = s.key; $("docPick").click(); });
+      acts.appendChild(pick);
+
+      row.appendChild(info);
+      row.appendChild(stEl);
+      row.appendChild(acts);
+      box.appendChild(row);
+    });
+  }
+
+  function onDocPicked(e) {
+    var f = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!f) return;
+    var key = pendingKey || "doc";
+    state.files = state.files || {};
+    state.files[key] = f.name;
+    save();
+    try { frame.contentWindow.postMessage({ htmlbg: { type: "file", key: key, file: f } }, "*"); } catch (err) {}
+    renderFileSlots();
+    setSlotStatus(key, "已选择", "ok");
+  }
+
+  var PRESETS = window.HTMLBG_PRESETS || [];
+
+  function presetPageUrl(page) {
+    try { return new URL(page, location.href).href; } catch (e) { return page; }
+  }
+
+  function applyPreset(id) {
+    var p = null;
+    for (var i = 0; i < PRESETS.length; i++) { if (PRESETS[i].id === id) p = PRESETS[i]; }
+    if (!p) return;
+    var cfg = JSON.parse(JSON.stringify(p.config));
+    var keep = Object.assign({}, defaultConfig().preset, state.preset || {});
+    state.source = cfg.source;
+    if (cfg.source.type === "file") state.source.file = presetPageUrl(cfg.source.file);
+    state.source._blobUrl = null;
+    state.display = merge(state.display, cfg.display || {});
+    if (cfg.ui) state.ui = merge(state.ui, cfg.ui);
+    state.preset = Object.assign({}, cfg.preset || {}, keep);
+    state.preset.id = p.id;
+    syncControls();
+    applyAll();
+    save();
+  }
+
+  function buildPresetList() {
+    var box = $("presetList");
+    if (!box || !PRESETS.length) return;
+    box.innerHTML = "";
+    PRESETS.forEach(function (p) {
+      var b = document.createElement("button");
+      b.className = "preset-item";
+      b.setAttribute("data-id", p.id);
+      var n = document.createElement("span"); n.className = "name"; n.textContent = p.name;
+      var d = document.createElement("span"); d.className = "desc"; d.textContent = p.desc;
+      b.appendChild(n); b.appendChild(d);
+      b.addEventListener("click", function () { applyPreset(p.id); });
+      box.appendChild(b);
+    });
+  }
+
+  function syncPreset() {
+    var p = state.preset || defaultConfig().preset;
+    document.querySelectorAll("#presetList .preset-item").forEach(function (el) {
+      el.classList.toggle("active", el.getAttribute("data-id") === p.id);
+    });
+    var opts = $("presetOpts");
+    if (opts) opts.classList.toggle("off", !p.id || p.id === "builtin");
+    $("examDate").value = /^\d{4}-\d{2}-\d{2}$/.test(p.examDate) ? p.examDate : "2027-06-07";
+    $("docFs").value = p.fontSize; $("docFsVal").textContent = p.fontSize + "px";
+    $("docSp").value = p.scrollSpeed; $("docSpVal").textContent = p.scrollSpeed + "px/s";
+    $("cdShow").checked = !!p.showCountdown;
+    $("cdLabel").value = p.label || "距离高考";
+    if ($("docPause")) $("docPause").checked = !!p.paused;
+    document.querySelectorAll("#posGrid .magnet").forEach(function (b) {
+      b.classList.toggle("active", b.getAttribute("data-pos") === (p.pos || "right-center"));
+    });
+    document.querySelectorAll("#sizeRow .chip").forEach(function (b) {
+      b.classList.toggle("active", b.getAttribute("data-size") === (p.size || "md"));
+    });
+    renderFileSlots();
+  }
+
+  function bindPreset() {
+    $("examDate").addEventListener("change", function () {
+      var v = this.value;
+      if (/^\d{4}-\d{2}-\d{2}$/.test(v)) { state.preset.examDate = v; applyPresetOptions(); save(); }
+    });
+    $("docFs").addEventListener("input", function () {
+      state.preset.fontSize = parseInt(this.value, 10) || 22;
+      $("docFsVal").textContent = state.preset.fontSize + "px"; applyPresetOptions(); save();
+    });
+    $("docSp").addEventListener("input", function () {
+      state.preset.scrollSpeed = parseInt(this.value, 10) || 0;
+      $("docSpVal").textContent = state.preset.scrollSpeed + "px/s"; applyPresetOptions(); save();
+    });
+    $("cdShow").addEventListener("change", function () {
+      state.preset.showCountdown = this.checked; applyPresetOptions(); save();
+    });
+    $("cdLabel").addEventListener("change", function () {
+      state.preset.label = this.value.trim() || "距离高考"; applyPresetOptions(); save();
+    });
+    if ($("docPause")) $("docPause").addEventListener("change", function () {
+      state.preset.paused = this.checked; applyPresetOptions(); save();
+    });
+    document.querySelectorAll("#posGrid .magnet").forEach(function (b) {
+      b.addEventListener("click", function () {
+        state.preset.pos = b.getAttribute("data-pos");
+        syncPreset(); applyPresetOptions(); save();
+      });
+    });
+    document.querySelectorAll("#sizeRow .chip").forEach(function (b) {
+      b.addEventListener("click", function () {
+        state.preset.size = b.getAttribute("data-size");
+        syncPreset(); applyPresetOptions(); save();
+      });
+    });
+    if ($("docPick")) $("docPick").addEventListener("change", onDocPicked);
+  }
+
+  // 只把选项推给 iframe，不重新加载页面
+  function applyPresetOptions() {
+    pushPresetToIframe();
   }
 
   // ---------- 面板与 Tabs ----------
@@ -269,6 +516,7 @@
     $("theme").value = state.ui.theme;
     $("accent").value = state.ui.accent;
     $("showClock").checked = state.widget.showClock;
+    syncPreset();
   }
 
   // ---------- 配置导入/导出 ----------

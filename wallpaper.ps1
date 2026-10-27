@@ -59,9 +59,21 @@ param(
 $ErrorActionPreference = 'Stop'
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
-# Desktop-attach engine (Win32 bindings + the five modes), then the mini browser.
+# Desktop-attach engine (Win32 bindings + the five modes), then the mini browser,
+# then the host half of the preset pages (docx reader, file dialog, iframe bridge).
 . (Join-Path $ScriptDir 'desktopcore.ps1')
 . (Join-Path $ScriptDir 'browsercore.ps1')
+. (Join-Path $ScriptDir 'presetcore.ps1')
+
+$script:BaseDir = $ScriptDir
+
+# Every CoreWebView2 gets the file bridge: an injected page script plus a fake
+# origin (https://htmlbg.local/file/<slot>) that serves whatever file the user bound
+# to that slot in the settings window.  See presets/filebridge.js.
+$script:OnCoreReady = {
+  param($core)
+  Install-FileBridge -Core $core -BridgePath (Join-Path $ScriptDir 'presets\filebridge.js') | Out-Null
+}
 
 # ------------------------------------------------------------ config inject
 function Write-ConfigInject {
@@ -82,7 +94,16 @@ Write-ConfigInject
 # localStorage is genuinely shared and settings reach the wallpaper immediately.
 # (The old Edge build gave each window its own profile, which is why the two sides
 # could never quite see each other.)
-$script:ProfileDir = Join-Path $env:LOCALAPPDATA 'HTMLWallpaperProfile'
+# $env:LOCALAPPDATA is missing in some stripped-down shells (scheduled tasks, some
+# CI/sandbox hosts), so fall back to the documented location instead of crashing.
+$script:AppDataLeaf = $env:LOCALAPPDATA
+if (-not $script:AppDataLeaf) {
+  $script:AppDataLeaf = Join-Path $env:USERPROFILE 'AppData\Local'
+}
+if (-not (Test-Path -LiteralPath $script:AppDataLeaf)) {
+  $script:AppDataLeaf = Join-Path $ScriptDir '.profile'
+}
+$script:ProfileDir = Join-Path $script:AppDataLeaf 'HTMLWallpaperProfile'
 $script:VendorDir  = Join-Path $ScriptDir 'vendor'
 
 $engine = Initialize-BrowserEngine -VendorDir $script:VendorDir `
@@ -162,7 +183,15 @@ Write-Host 'Tray icon installed. Hotkeys: Ctrl+Alt+S = settings | Ctrl+Alt+M = n
 $script:SettingsRec = $null
 $script:LastTitle = ''
 $script:CfgCount = 0
+# Seed the host with config.json right away: the file bridge needs to know the file
+# bindings before the settings window ever connects (it serves them at page load).
 $script:Config = $null
+$cfgPath = Join-Path $ScriptDir 'config.json'
+if (Test-Path -LiteralPath $cfgPath) {
+  try { $script:Config = (Get-Content -LiteralPath $cfgPath -Raw) } catch { $script:Config = $null }
+}
+$script:CfgDirtyAt = $null
+$script:PageSlots = $null
 
 # --------------------------------------------------------- host <-> page bridge
 # The page talks to us through document.title (the only thing we can read from the
@@ -180,6 +209,7 @@ function Invoke-HostMessage {
       # works, so the UI can prefer it over plain localStorage.
       Push-ScriptTo $Rec "try{window.__htmlbgHasHost=true;}catch(e){}"
       Push-ScriptTo $Rec $ack
+      Update-SlotScan
     }
     'cfg' {
       # The settings window reports its configuration.  WebView2 windows do NOT share
@@ -190,6 +220,7 @@ function Invoke-HostMessage {
       $script:CfgCount++
       if ($script:CfgCount -le 5) { Write-Host "config forwarded to wallpaper (#$($script:CfgCount), $($json.Length) bytes)" }
       Push-ScriptTo $script:WallpaperRec "try{window.__htmlbgApplyCfg && window.__htmlbgApplyCfg(decodeURIComponent('$([System.Uri]::EscapeDataString($json))'));}catch(e){}"
+      Update-SlotScan
       Push-ScriptTo $Rec $ack
     }
     'export' {
@@ -220,6 +251,90 @@ function Invoke-HostMessage {
     }
     'openfolder' { Start-Process -FilePath 'explorer.exe' -ArgumentList $ScriptDir | Out-Null; Push-ScriptTo $Rec $ack }
     'quit'       { Push-ScriptTo $Rec $ack; Invoke-Quit }
+
+    # ---- preset pages (relayed by wallpaper.js from the iframe) ---------------
+    'presetset' {
+      # The preset page changed its own options (date, doc path, font size, speed).
+      # Merge them into our config and persist config.json, rate limited so dragging
+      # a slider does not write the file on every step.
+      try {
+        $json = [System.Uri]::UnescapeDataString($Payload)
+        $obj = $json | ConvertFrom-Json
+        $cfgJson = if ($script:Config) { $script:Config } else { (Get-Content (Join-Path $ScriptDir 'config.json') -Raw) }
+        $cfg = $cfgJson | ConvertFrom-Json
+        if (-not $cfg.preset) { $cfg | Add-Member -NotePropertyName preset -NotePropertyValue ([pscustomobject]@{}) }
+        foreach ($prop in $obj.PSObject.Properties) {
+          if ($cfg.preset.PSObject.Properties.Name -contains $prop.Name) {
+            $cfg.preset.$($prop.Name) = $prop.Value
+          } else {
+            $cfg.preset | Add-Member -NotePropertyName $prop.Name -NotePropertyValue $prop.Value -Force
+          }
+        }
+        $script:Config = $cfg | ConvertTo-Json -Depth 8 -Compress
+        $script:CfgDirtyAt = Get-Date
+        Push-ToIframe ('{"type":"config","preset":' + ($cfg.preset | ConvertTo-Json -Compress -Depth 4) + '}')
+        Write-Host "preset options updated"
+      } catch { Write-Host "presetset failed: $($_.Exception.Message)" }
+      Push-ScriptTo $script:SettingsRec "try{window.__htmlbgPresetChanged && window.__htmlbgPresetChanged(decodeURIComponent('$([System.Uri]::EscapeDataString($script:Config))'));}catch(e){}"
+      Push-ScriptTo $Rec $ack
+    }
+    'slots' {
+      # The page itself reports its <input type="file"> slots (runtime counterpart of
+      # Get-HtmlFileSlots, and the only way for a page loaded from a URL).
+      $json = [Uri]::UnescapeDataString($Payload)
+      $script:PageSlots = $json
+      try {
+        $o = $json | ConvertFrom-Json
+        Write-Host ("slots reported by page: " + @($o.slots).Count + " -> " + (($o.slots | ForEach-Object { $_.key }) -join ', ') + "  from " + $o.href)
+      } catch {}
+      Push-ScriptTo $script:SettingsRec "try{window.__htmlbgSlots && window.__htmlbgSlots(decodeURIComponent('$([Uri]::EscapeDataString($json))'));}catch(e){}"
+      Push-ScriptTo $Rec $ack
+    }
+    'pickfile' {
+      # Browse one file and bind it to a slot.  The page cannot open a dialog (and it
+      # cannot even be clicked), so this always comes from the settings window.
+      $key = [Uri]::UnescapeDataString($Payload)
+      $path = Open-DocumentDialog -Accept (Get-SlotAccept $key)
+      if ($path) {
+        $cfg = Set-BoundFile -Key $key -Path $path
+        if ($cfg) {
+          $script:CfgDirtyAt = Get-Date
+          Push-ScriptTo $script:WallpaperRec "try{window.__htmlbgApplyCfg && window.__htmlbgApplyCfg(decodeURIComponent('$([Uri]::EscapeDataString($cfg))'));}catch(e){}"
+          Write-Host ("file bound: '" + $key + "' -> " + $path)
+        }
+        Push-ScriptTo $script:SettingsRec "try{window.__htmlbgFilePicked && window.__htmlbgFilePicked(decodeURIComponent('$([Uri]::EscapeDataString((Convert-ToJsonString $key)))'),decodeURIComponent('$([Uri]::EscapeDataString((Convert-ToJsonString $path)))'));}catch(e){}"
+      }
+      Push-ScriptTo $Rec $ack
+    }
+    'unbindfile' {
+      # Detach whatever the slot was bound to.
+      $key = [Uri]::UnescapeDataString($Payload)
+      $cfg = Set-BoundFile -Key $key -Path ''
+      if ($cfg) {
+        $script:CfgDirtyAt = Get-Date
+        Push-ScriptTo $script:WallpaperRec "try{window.__htmlbgApplyCfg && window.__htmlbgApplyCfg(decodeURIComponent('$([Uri]::EscapeDataString($cfg))'));}catch(e){}"
+        Push-ScriptTo $script:SettingsRec "try{window.__htmlbgFilePicked && window.__htmlbgFilePicked(decodeURIComponent('$([Uri]::EscapeDataString((Convert-ToJsonString $key)))'),decodeURIComponent('\"\"'));}catch(e){}"
+      }
+      Push-ScriptTo $Rec $ack
+    }
+    'fileread' {
+      # The bridge wants the bytes of whatever is bound to this slot.  Hand them over
+      # directly - the page has no way to read local files on its own.
+      $key = [Uri]::UnescapeDataString($Payload)
+      Send-FileBytes -Key $key
+      Push-ScriptTo $Rec $ack
+    }
+    'filestatus' {
+      # The bridge tells us whether it managed to drop the File into the input.
+      $json = [Uri]::UnescapeDataString($Payload)
+      Write-Host ("filestatus: " + $json)
+      Push-ScriptTo $script:SettingsRec "try{window.__htmlbgFileStatus && window.__htmlbgFileStatus(decodeURIComponent('$([Uri]::EscapeDataString($json))'));}catch(e){}"
+      Push-ScriptTo $Rec $ack
+    }
+    'rescan' {
+      Update-SlotScan -Force
+      Push-ScriptTo $Rec $ack
+    }
   }
 }
 
@@ -355,6 +470,17 @@ $script:Timer = New-Object System.Windows.Forms.Timer
 $script:Timer.Interval = 200
 $script:Timer.add_Tick({
   try { Update-BrowserWindows } catch { Write-Host "browser update error: $($_.Exception.Message)" }
+
+  # ---- preset option changes are persisted with a short delay -----------------
+  # Dragging a slider in the preset page fires a message per step; writing config.json
+  # on every step would spam the disk.
+  if ($script:CfgDirtyAt -and ((Get-Date) - $script:CfgDirtyAt).TotalSeconds -ge 1.5) {
+    $script:CfgDirtyAt = $null
+    try {
+      Set-Content -Path (Join-Path $ScriptDir 'config.json') -Value $script:Config -Encoding UTF8
+      Write-Host 'config.json updated from preset options'
+    } catch { Write-Host "config write failed: $($_.Exception.Message)" }
+  }
 
   # ---- page -> host messages (delivered through document.title) ---------------
   foreach ($rec in @($script:SettingsRec, $script:WallpaperRec)) {

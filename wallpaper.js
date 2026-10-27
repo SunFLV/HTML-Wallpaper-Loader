@@ -27,6 +27,10 @@
 
   var $ = function (id) { return document.getElementById(id); };
   var frame = $("frame");
+
+  // Tells the injected file bridge (presets/filebridge.js) that this document is the
+  // host shell, not user content: it must not scan itself for file inputs.
+  window.__htmlbgWallpaperHost = true;
   var frameWrap = $("frameWrap");
   var stage = $("stage");
   var currentBlob = null;
@@ -62,7 +66,103 @@
     document.documentElement.style.setProperty("--accent", (cfg.ui && cfg.ui.accent) || "#7c5cff");
     frame.style.pointerEvents = cfg.behavior && cfg.behavior.clickThrough ? "none" : "auto";
     document.body.classList.toggle("hide-cursor", !!(cfg.behavior && cfg.behavior.hideCursor));
+    pushPresetToIframe(cfg);
   }
+
+  // ---------- 预设页面 <-> 宿主 ----------
+  // Preset pages (presets/*.html) live inside the iframe and cannot talk to the
+  // Win32 host directly.  Two relays:
+  //   iframe -> us -> host : the host only reads document.title, so we re-send the
+  //                          iframe's postMessage as a [[htmlbg:kind:payload]] marker
+  //   host -> us -> iframe : __htmlbgIframe() posts a message into the iframe
+  var WP_BASE_TITLE = document.title;
+  var pendingToHost = null;
+  var pendingToIframe = [];
+
+  function hostSend(kind, payload) { pendingToHost = { kind: kind, payload: payload || "" }; }
+
+  setInterval(function () {
+    try {
+      if (pendingToHost) {
+        document.title = WP_BASE_TITLE + " [[htmlbg:" + pendingToHost.kind + ":" + encodeURIComponent(pendingToHost.payload) + "]]";
+      } else if (document.title !== WP_BASE_TITLE) {
+        document.title = WP_BASE_TITLE;
+      }
+    } catch (e) {}
+  }, 350);
+
+  window.__htmlbgAck = function () {
+    pendingToHost = null;
+    try { document.title = WP_BASE_TITLE; } catch (e) {}
+    return "ok";
+  };
+
+  // host pushes a message object into the iframe
+  window.__htmlbgIframe = function (obj) {
+    try {
+      if (frame.contentWindow) frame.contentWindow.postMessage({ htmlbg: obj }, "*");
+      else pendingToIframe.push(obj);
+    } catch (e) {}
+    return "ok";
+  };
+
+  // Turns { slotKey: "C:\\a\\b.pdf" } into something the bridge can identify.
+  // The bytes themselves never travel through here - the bridge asks the host for
+  // them afterwards (see filebridge.js), which is the only transport Chromium lets
+  // a file:// page use for local files.  "path" is part of the signature so that
+  // picking a different file for the same slot always triggers a reload.
+  function fileToSlots(files) {
+    var map = {};
+    Object.keys(files || {}).forEach(function (k) {
+      var v = files[k];
+      if (v && typeof v === "string") {
+        map[k] = { name: String(v).replace(/^.*[\\\/]/, ""), path: v };
+      } else if (v) {
+        map[k] = v;
+      }
+    });
+    return map;
+  }
+
+  function pushPresetToIframe(cfg) {
+    var msg = {
+      type: "config",
+      preset: (cfg && cfg.preset) || null,
+      files: fileToSlots(cfg && cfg.files),
+      meta: { accent: cfg && cfg.ui && cfg.ui.accent, desktop: true }
+    };
+    pendingToIframe.push(msg);
+    try {
+      if (frame.contentWindow) frame.contentWindow.postMessage({ htmlbg: msg }, "*");
+    } catch (e) {}
+  }
+
+  frame.addEventListener("load", function () {
+    var out = pendingToIframe.splice(0);
+    out.forEach(function (m) {
+      try { frame.contentWindow.postMessage({ htmlbg: m }, "*"); } catch (e) {}
+    });
+  });
+
+  // iframe -> host relay (preset pages ask for files, report option changes, …)
+  window.addEventListener("message", function (e) {
+    var d = e.data;
+    if (!d || !d.htmlbg || !d.htmlbg.kind) return;
+    var m = d.htmlbg;
+    if (m.kind === "presetset") {
+      // preset options changed inside the page: keep our config in sync locally
+      try {
+        var p = JSON.parse(m.payload);
+        var raw = currentRaw();
+        var cfg = raw ? fill(JSON.parse(raw)) : fill(window.WALLPAPER_CONFIG || null);
+        cfg.preset = Object.assign({}, cfg.preset || {}, p);
+        lastRaw = JSON.stringify(cfg);
+        try { localStorage.setItem(STORAGE_KEY, lastRaw); } catch (err) {}
+      } catch (err) {}
+    }
+    hostSend(m.kind, m.payload || "");
+  });
+
 
   // 桌面版：设置窗口通过宿主（wallpaper.ps1）推送配置。
   // WebView2 的两个窗口即使共用同一个用户数据目录，file:// 下的 localStorage 也
@@ -80,13 +180,19 @@
     source: { type: "builtin", url: "", file: "", html: "" },
     display: { scale: 1, opacity: 1, background: "#0a0a12" },
     behavior: { reloadMinutes: 0, hideCursor: false, clickThrough: false },
-    ui: { theme: "dark", accent: "#7c5cff" }
+    ui: { theme: "dark", accent: "#7c5cff" },
+    preset: {
+      id: "", examDate: "2027-06-07", docPath: "", fontSize: 22,
+      scrollSpeed: 26, showCountdown: true, label: "距离高考",
+      pos: "right-center", size: "md", paused: false
+    },
+    files: {}
   };
 
   function fill(cfg) {
     var out = JSON.parse(JSON.stringify(DEFAULTS));
     if (cfg && typeof cfg === "object") {
-      ["source", "display", "behavior", "ui"].forEach(function (k) {
+      ["source", "display", "behavior", "ui", "preset", "files"].forEach(function (k) {
         if (cfg[k] && typeof cfg[k] === "object") {
           Object.keys(cfg[k]).forEach(function (kk) { out[k][kk] = cfg[k][kk]; });
         }

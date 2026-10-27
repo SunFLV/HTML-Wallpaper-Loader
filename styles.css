@@ -323,6 +323,77 @@ input[type="range"] {
 }
 .config-actions .btn { margin-top: 0; }
 
+/* ---------- 预设页面列表 ---------- */
+.preset-list { display: grid; gap: 10px; }
+.preset-item {
+  text-align: left; width: 100%; cursor: pointer;
+  border: 1px solid var(--field-border); background: var(--field-bg);
+  color: var(--text); border-radius: var(--radius-sm); padding: 12px 14px;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+.preset-item:hover { border-color: var(--accent); }
+.preset-item.active { border-color: var(--accent); background: var(--accent-soft); }
+.preset-item .name { display: block; font-size: 14px; font-weight: 700; }
+.preset-item .desc { display: block; margin-top: 4px; font-size: 12px; color: var(--muted); line-height: 1.5; }
+.preset-opts { margin-top: 14px; }
+.preset-opts.off { display: none; }
+.cfg-row { margin-bottom: 10px; }
+
+/* ---------- 布局磁铁 / 大小 ---------- */
+.magnet-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  gap: 6px; width: 132px; margin: 6px 0 4px;
+}
+.magnet {
+  aspect-ratio: 1 / 1; border-radius: 6px; cursor: pointer; padding: 0;
+  border: 1px solid var(--field-border); background: var(--field-bg);
+  position: relative; transition: border-color .18s ease, background .18s ease;
+}
+.magnet::after {
+  content: ""; position: absolute; inset: 22%; border-radius: 3px;
+  background: var(--muted); opacity: .45;
+}
+.magnet:hover { border-color: var(--accent); }
+.magnet.active { border-color: var(--accent); background: var(--accent-soft); }
+.magnet.active::after { background: var(--accent); opacity: .95; }
+.magnet[data-pos="left-top"]::after { inset: 18% auto auto 18%; width: 34%; height: 34%; }
+.magnet[data-pos="center-top"]::after { inset: 18% auto auto 33%; width: 34%; height: 34%; }
+.magnet[data-pos="right-top"]::after { inset: 18% 18% auto auto; width: 34%; height: 34%; }
+.magnet[data-pos="left-center"]::after { inset: 33% auto auto 18%; width: 34%; height: 34%; }
+.magnet[data-pos="center"]::after { inset: 33% auto auto 33%; width: 34%; height: 34%; }
+.magnet[data-pos="right-center"]::after { inset: 33% 18% auto auto; width: 34%; height: 34%; }
+.magnet[data-pos="left-bottom"]::after { inset: auto auto 18% 18%; width: 34%; height: 34%; }
+.magnet[data-pos="center-bottom"]::after { inset: auto auto 18% 33%; width: 34%; height: 34%; }
+.magnet[data-pos="right-bottom"]::after { inset: auto 18% 18% auto; width: 34%; height: 34%; }
+
+.chip-row { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 4px; }
+.chip {
+  cursor: pointer; padding: 5px 12px; border-radius: 999px; font-size: 12px;
+  border: 1px solid var(--field-border); background: var(--field-bg); color: var(--text);
+  transition: border-color .18s ease, background .18s ease;
+}
+.chip:hover { border-color: var(--accent); }
+.chip.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+
+/* ---------- 文件导入槽 ---------- */
+.slot-list { display: grid; gap: 8px; margin: 10px 0 12px; }
+.slot-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border-radius: var(--radius-sm);
+  border: 1px solid var(--field-border); background: var(--field-bg);
+}
+.slot-info { flex: 1 1 auto; min-width: 0; }
+.slot-name { font-size: 13px; font-weight: 700; }
+.slot-path {
+  font-size: 11px; color: var(--muted); margin-top: 3px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.slot-state { flex: 0 0 auto; font-size: 11px; color: var(--muted); max-width: 96px; text-align: right; }
+.slot-state.ok { color: #4ade80; }
+.slot-state.bad { color: #ff6b6b; }
+.slot-actions { flex: 0 0 auto; display: flex; gap: 6px; }
+.btn.tiny { padding: 4px 9px; font-size: 11px; margin-top: 0; width: auto; }
+
 .panel-foot {
   display: flex;
   gap: 10px;

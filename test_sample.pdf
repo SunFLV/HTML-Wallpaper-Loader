@@ -1,0 +1,119 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> /Contents 4 0 R >>
+endobj
+4 0 obj
+<< /Length 566 >>
+stream
+BT
+/F1 14 Tf
+1 0 0 1 72 720 Tm
+(Gaokao Revision Notes) Tj
+/F1 14 Tf
+1 0 0 1 72 698 Tm
+(Chapter 1 Quadratic function) Tj
+/F2 14 Tf
+1 0 0 1 72 676 Tm
+<01000101010201030104010501060107> Tj
+/F2 14 Tf
+1 0 0 1 72 654 Tm
+<01080109010A010B0103010C01030109010A010D010E010B010F0110010301110103010E0112011301140115011601030111010E0117> Tj
+/F2 14 Tf
+1 0 0 1 72 632 Tm
+<01180119011A011B0103011C011D011E0112011F0103011C010A010F0110010D0120010A010D01210103012201230114011501160103012101110120010F0110012401090125011C010B0117> Tj
+/F1 14 Tf
+1 0 0 1 72 610 Tm
+(End of page one) Tj
+ET
+
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+6 0 obj
+<< /Type /Font /Subtype /Type0 /BaseFont /STSong-Light /Encoding /Identity-H /DescendantFonts [7 0 R] /ToUnicode 8 0 R >>
+endobj
+7 0 obj
+<< /Type /Font /Subtype /CIDFontType0 /BaseFont /STSong-Light /CIDSystemInfo << /Registry (Adobe) /Ordering (GB1) /Supplement 2 >> >>
+endobj
+8 0 obj
+<< /Length 769 >>
+stream
+/CIDInit /ProcSet findresource begin
+12 dict begin
+begincmap
+/CMapName /A-0 def
+/CMapType 2 def
+1 begincodespacerange
+<0000> <FFFF>
+endcodespacerange
+38 beginbfchar
+<0100> <7B2C>
+<0101> <4E00>
+<0102> <7AE0>
+<0103> <0020>
+<0104> <4E8C>
+<0105> <6B21>
+<0106> <51FD>
+<0107> <6570>
+<0108> <0066>
+<0109> <0028>
+<010A> <0078>
+<010B> <0029>
+<010C> <003D>
+<010D> <002B>
+<010E> <0031>
+<010F> <005E>
+<0110> <0032>
+<0111> <002D>
+<0112> <FF0C>
+<0113> <6781>
+<0114> <5C0F>
+<0115> <503C>
+<0116> <4E3A>
+<0117> <3002>
+<0118> <5B9A>
+<0119> <7406>
+<011A> <FF1A>
+<011B> <82E5>
+<011C> <0061>
+<011D> <003E>
+<011E> <0030>
+<011F> <5219>
+<0120> <0062>
+<0121> <0063>
+<0122> <7684>
+<0123> <6700>
+<0124> <002F>
+<0125> <0034>
+endbfchar
+endcmap
+CMapName currentdict /CMap defineresource pop
+end
+end
+
+endstream
+endobj
+xref
+0 9
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000251 00000 n 
+0000000868 00000 n 
+0000000938 00000 n 
+0000001075 00000 n 
+0000001224 00000 n 
+trailer
+<< /Size 9 /Root 1 0 R >>
+startxref
+2044
+%%EOF

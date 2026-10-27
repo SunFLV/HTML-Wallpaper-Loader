@@ -1,9 +1,9 @@
-{
+﻿{
   "version": 1,
   "source": {
-    "type": "builtin",
+    "type": "file",
     "url": "",
-    "file": "",
+    "file": "presets/exam-dock.html",
     "html": ""
   },
   "display": {
@@ -20,7 +20,18 @@
     "theme": "dark",
     "accent": "#7c5cff"
   },
-  "widget": {
-    "showClock": true
+  "preset": {
+    "id": "exam-dock",
+    "examDate": "2027-06-07",
+    "fontSize": 22,
+    "scrollSpeed": 26,
+    "showCountdown": true,
+    "label": "距离高考",
+    "pos": "right-center",
+    "size": "md",
+    "paused": false
+  },
+  "files": {
+    "doc": "test_sample.pdf"
   }
 }

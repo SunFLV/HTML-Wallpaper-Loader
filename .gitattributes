@@ -1,0 +1,25 @@
+# Everything here is consumed on Windows only (PowerShell + WebView2), so keep bytes
+# exactly as authored: no CRLF rewriting for text, and absolutely none for binaries
+# (without this, git mangles the sample .pdf/.docx fixtures, which are zip/byte streams).
+* -text
+
+*.ps1   text -diff merge=union
+*.txt   text
+*.md    text
+*.html  text -diff
+*.css   text -diff
+*.js    text -diff
+*.json  text -diff
+*.csv   text -diff
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.pdf binary
+*.docx binary
+*.xlsx binary
+*.pptx binary
+*.doc binary
+*.zip binary
+*.dll binary
+*.exe binary

@@ -66,6 +66,69 @@
       </section>
 
       <section class="block">
+        <h2>预设页面</h2>
+        <div id="presetList" class="preset-list"></div>
+        <div id="presetOpts" class="preset-opts">
+          <div class="cfg-row">
+            <label class="row">倒计时标题</label>
+            <input id="cdLabel" type="text" value="距离高考" />
+          </div>
+          <div class="cfg-row">
+            <label class="row">考试日期</label>
+            <input id="examDate" type="date" value="2027-06-07" />
+          </div>
+          <label class="check"><input id="cdShow" type="checkbox" checked /> 显示倒计时面板</label>
+
+          <label class="row">面板位置（点格子吸附）</label>
+          <div id="posGrid" class="magnet-grid">
+            <button type="button" class="magnet" data-pos="left-top" title="左上"></button>
+            <button type="button" class="magnet" data-pos="center-top" title="上中"></button>
+            <button type="button" class="magnet" data-pos="right-top" title="右上"></button>
+            <button type="button" class="magnet" data-pos="left-center" title="左中"></button>
+            <button type="button" class="magnet" data-pos="center" title="正中"></button>
+            <button type="button" class="magnet" data-pos="right-center" title="右中"></button>
+            <button type="button" class="magnet" data-pos="left-bottom" title="左下"></button>
+            <button type="button" class="magnet" data-pos="center-bottom" title="下中"></button>
+            <button type="button" class="magnet" data-pos="right-bottom" title="右下"></button>
+          </div>
+
+          <label class="row">面板大小</label>
+          <div id="sizeRow" class="chip-row">
+            <button type="button" class="chip" data-size="xs">极小</button>
+            <button type="button" class="chip" data-size="sm">小</button>
+            <button type="button" class="chip" data-size="md">中</button>
+            <button type="button" class="chip" data-size="lg">大</button>
+            <button type="button" class="chip" data-size="xl">极大</button>
+          </div>
+
+          <label class="row">文档字号 <span id="docFsVal" class="val">22px</span></label>
+          <input id="docFs" type="range" min="12" max="40" step="1" value="22" />
+
+          <label class="row">滚动速度 <span id="docSpVal" class="val">26px/s</span></label>
+          <input id="docSp" type="range" min="0" max="120" step="1" value="26" />
+
+          <label class="check"><input id="docPause" type="checkbox" /> 暂停滚动</label>
+          <p class="hint">
+            桌面上的壁纸是<b>不可点击</b>的（桌面图标层挡在它上面，鼠标事件进不到页面），
+            所以这里什么都能调：位置、大小、字号、速度、导入的文件，改完立刻出现在桌面上。
+          </p>
+        </div>
+      </section>
+
+      <section class="block">
+        <h2>文件导入</h2>
+        <p class="hint">
+          如果当前壁纸 HTML 里有需要导入文件的部分（<code>&lt;input type="file"&gt;</code>
+          或 <code>data-htmlbg-file</code> 标记），会列在这里；给它绑定文件后，每次加载壁纸都会自动注入。<br />
+          支持 Word（.docx）、PDF（.pdf）、PowerPoint（.pptx）、Excel（.xlsx/.csv/.tsv）、文本（.txt/.md）、图片、音视频。
+        </p>
+        <div id="fileSlots" class="slot-list"></div>
+        <div class="config-actions">
+          <button id="rescanBtn" class="btn ghost">重新扫描页面</button>
+        </div>
+      </section>
+
+      <section class="block">
         <h2>显示</h2>
         <label class="row">缩放 <span id="scaleVal" class="val">100%</span></label>
         <input id="scale" type="range" min="0.1" max="3" step="0.05" value="1" />
@@ -118,6 +181,7 @@
   </aside>
 
   <script src="config-inject.js"></script>
+  <script src="presets/presets.js"></script>
   <script src="settings.js"></script>
 </body>
 </html>

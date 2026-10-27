@@ -10,7 +10,21 @@
       display: { scale: 1, opacity: 1, background: "#0a0a12" },
       behavior: { reloadMinutes: 0, hideCursor: false, clickThrough: false },
       ui: { theme: "dark", accent: "#7c5cff" },
-      widget: { showClock: true }
+      widget: { showClock: true },
+      preset: {
+        id: "",
+        examDate: "2027-06-07",
+        docPath: "",
+        fontSize: 22,
+        scrollSpeed: 26,
+        showCountdown: true,
+        label: "距离高考",
+        pos: "right-center",
+        size: "md",
+        paused: false
+      },
+      // slot key -> absolute-ish path; delivered to the page as a real File
+      files: {}
     };
   }
 
@@ -87,6 +101,150 @@
     }
     return "ok";
   };
+
+  // 壁纸里的预设页面改了自己的选项（日期/文档/字号/速度），宿主转发过来
+  // 让我们把界面同步成一致
+  window.__htmlbgPresetChanged = function (encJson) {
+    try {
+      var data = JSON.parse(decodeURIComponent(encJson));
+      state = merge(defaultConfig(), data);
+      syncControls();
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(serialize(state))); } catch (e) {}
+      window.__htmlbgSay("已同步壁纸上的预设改动");
+    } catch (e) {}
+    return "ok";
+  };
+
+  // 宿主原生文件对话框选好的 Word 文档路径
+  window.__htmlbgDocPicked = function (path) {
+    try {
+      if (path) {
+        state.preset.docPath = path;
+        $("docPath").value = path;
+        save();
+        window.__htmlbgSay("已选择文档，正在应用");
+      } else {
+        window.__htmlbgSay("没有选择文件");
+      }
+    } catch (e) {}
+    return "ok";
+  };
+
+  // 宿主扫描当前壁纸 HTML / 页面自己上报的文件槽
+  var detectedSlots = [];
+  window.__htmlbgSlots = function (encJson) {
+    try {
+      var data = JSON.parse(decodeURIComponent(encJson));
+      var next = (data && data.slots) || [];
+      if (JSON.stringify(next.map(function (s) { return [s.key, s.label, s.accept]; })) !==
+          JSON.stringify(detectedSlots.map(function (s) { return [s.key, s.label, s.accept]; }))) {
+        detectedSlots = next;
+        renderFileSlots();
+        if (detectedSlots.length) window.__htmlbgSay("发现 " + detectedSlots.length + " 个文件导入点");
+      }
+    } catch (e) {}
+    return "ok";
+  };
+
+  // 宿主原生文件对话框选好的文件路径（属于某个文件槽）
+  window.__htmlbgFilePicked = function (encKey, encPath) {
+    try {
+      var key = JSON.parse(decodeURIComponent(encKey));
+      var path = JSON.parse(decodeURIComponent(encPath));
+      if (!state.files) state.files = {};
+      if (path) { state.files[key] = path; window.__htmlbgSay("已绑定：" + path.replace(/^.*[\\\/]/, "")); }
+      else { delete state.files[key]; window.__htmlbgSay("已解除绑定"); }
+      save();
+      renderFileSlots();
+    } catch (e) {}
+    return "ok";
+  };
+
+  // 页面上文件桥的回执：有没有真的把 File 放进 <input type=file>
+  window.__htmlbgFileStatus = function (encJson) {
+    try {
+      var s = JSON.parse(decodeURIComponent(encJson));
+      var ext = (s.name || "").split(".").pop().toLowerCase();
+      if (s.ok) window.__htmlbgSay("壁纸已载入：" + s.name + "（" + Math.round((s.size || 0) / 1024) + " KB）");
+      else window.__htmlbgSay("载入失败：" + (s.error || "未知错误") + "（" + (s.name || ext) + "）");
+      setSlotStatus(s.key, s.ok ? "已载入" : (s.error || "失败"), s.ok ? "ok" : "bad");
+    } catch (e) {}
+    return "ok";
+  };
+
+  function setSlotStatus(key, text, cls) {
+    var el = document.querySelector('#fileSlots [data-key="' + String(key).replace(/"/g, '\\"') + '"] .slot-state');
+    if (el) { el.textContent = text; el.className = "slot-state " + (cls || ""); }
+  }
+
+  function renderFileSlots() {
+    var box = $("fileSlots");
+    if (!box) return;
+    box.innerHTML = "";
+    if (!detectedSlots.length) {
+      var none = document.createElement("p");
+      none.className = "hint";
+      none.innerHTML = '当前页面没有检测到文件导入点。若你刚换过 HTML，点「重新扫描页面」。';
+      box.appendChild(none);
+      return;
+    }
+    detectedSlots.forEach(function (s) {
+      var row = document.createElement("div");
+      row.className = "slot-item";
+      row.setAttribute("data-key", s.key);
+
+      var info = document.createElement("div");
+      info.className = "slot-info";
+      var nm = document.createElement("div");
+      nm.className = "slot-name";
+      nm.textContent = s.label || s.key;
+      var path = document.createElement("div");
+      path.className = "slot-path";
+      path.textContent = (state.files && state.files[s.key]) || "未绑定文件";
+      info.appendChild(nm);
+      info.appendChild(path);
+
+      var acts = document.createElement("div");
+      acts.className = "slot-actions";
+      var pick = document.createElement("button");
+      pick.className = "btn tiny";
+      pick.textContent = "选择文件";
+      pick.addEventListener("click", function () {
+        if (window.__htmlbgHasHost) {
+          hostSend("pickfile", s.key);
+          window.__htmlbgSay("在弹出的对话框里选择文件…");
+        } else {
+          var v = window.prompt("输入文件的完整路径（浏览器预览不支持原生对话框）", path.textContent === "未绑定文件" ? "" : path.textContent);
+          if (v !== null) {
+            state.files = state.files || {};
+            if (v.trim()) state.files[s.key] = v.trim(); else delete state.files[s.key];
+            save();
+            renderFileSlots();
+          }
+        }
+      });
+      var clear = document.createElement("button");
+      clear.className = "btn tiny ghost";
+      clear.textContent = "清除";
+      clear.addEventListener("click", function () {
+        if (state.files) delete state.files[s.key];
+        if (window.__htmlbgHasHost) hostSend("unbindfile", s.key);
+        save();
+        renderFileSlots();
+      });
+      acts.appendChild(pick);
+      acts.appendChild(clear);
+
+      var st = document.createElement("div");
+      st.className = "slot-state";
+      st.textContent = (state.files && state.files[s.key]) ? "已绑定" : "";
+
+      row.appendChild(info);
+      row.appendChild(st);
+      row.appendChild(acts);
+      box.appendChild(row);
+    });
+  }
 
   // 打开设置窗口时主动向宿主要一次同步
   window.__htmlbgRefresh = function () { reportToHost(); return "ok"; };
@@ -222,6 +380,7 @@
     var t = state.source.type;
     if (t !== "url" && t !== "file" && t !== "code") t = "builtin";
     setTab(t);
+    syncPreset();
   }
 
   // ---------- 配置导入/导出 ----------
@@ -272,6 +431,106 @@
     save();
   }
 
+  // ---------- 预设页面 ----------
+  var PRESETS = window.HTMLBG_PRESETS || [];
+
+  function presetPageUrl(page) {
+    // presets/xxx.html -> file:///.../presets/xxx.html（相对当前文件解析，跨目录也能加载）
+    try { return new URL(page, location.href).href; } catch (e) { return page; }
+  }
+
+  function applyPreset(id) {
+    var p = null;
+    for (var i = 0; i < PRESETS.length; i++) { if (PRESETS[i].id === id) p = PRESETS[i]; }
+    if (!p) return;
+    var cfg = JSON.parse(JSON.stringify(p.config));
+    // 保留已有的预设选项（考试日期、文档路径…），只换页面和默认外观
+    var keep = Object.assign({}, defaultConfig().preset, state.preset || {});
+    state.source = cfg.source;
+    state.display = merge(state.display, cfg.display || {});
+    if (cfg.ui) state.ui = merge(state.ui, cfg.ui);
+    state.preset = Object.assign({}, cfg.preset || {}, keep);
+    state.preset.id = p.id;
+    syncControls();
+    save();
+  }
+
+  function buildPresetList() {
+    var box = $("presetList");
+    if (!box || !PRESETS.length) return;
+    box.innerHTML = "";
+    PRESETS.forEach(function (p) {
+      var b = document.createElement("button");
+      b.className = "preset-item";
+      b.setAttribute("data-id", p.id);
+      var n = document.createElement("span"); n.className = "name"; n.textContent = p.name;
+      var d = document.createElement("span"); d.className = "desc"; d.textContent = p.desc;
+      b.appendChild(n); b.appendChild(d);
+      b.addEventListener("click", function () { applyPreset(p.id); });
+      box.appendChild(b);
+    });
+  }
+
+  function bindPreset() {
+    $("examDate").addEventListener("change", function () {
+      var v = this.value;
+      if (/^\d{4}-\d{2}-\d{2}$/.test(v)) { state.preset.examDate = v; save(); }
+    });
+    $("docFs").addEventListener("input", function () {
+      state.preset.fontSize = parseInt(this.value, 10) || 22;
+      $("docFsVal").textContent = state.preset.fontSize + "px"; save();
+    });
+    $("docSp").addEventListener("input", function () {
+      state.preset.scrollSpeed = parseInt(this.value, 10) || 0;
+      $("docSpVal").textContent = state.preset.scrollSpeed + "px/s"; save();
+    });
+    $("cdShow").addEventListener("change", function () {
+      state.preset.showCountdown = this.checked; save();
+    });
+    $("cdLabel").addEventListener("change", function () {
+      state.preset.label = this.value.trim() || "距离高考"; save();
+    });
+    $("docPause").addEventListener("change", function () {
+      state.preset.paused = this.checked; save();
+    });
+    document.querySelectorAll("#posGrid .magnet").forEach(function (b) {
+      b.addEventListener("click", function () {
+        state.preset.pos = b.getAttribute("data-pos");
+        syncPreset();
+        save();
+      });
+    });
+    document.querySelectorAll("#sizeRow .chip").forEach(function (b) {
+      b.addEventListener("click", function () {
+        state.preset.size = b.getAttribute("data-size");
+        syncPreset();
+        save();
+      });
+    });
+  }
+
+  function syncPreset() {
+    var p = state.preset || defaultConfig().preset;
+    document.querySelectorAll("#presetList .preset-item").forEach(function (el) {
+      el.classList.toggle("active", el.getAttribute("data-id") === p.id);
+    });
+    var opts = $("presetOpts");
+    if (opts) opts.classList.toggle("off", !p.id || p.id === "builtin");
+    $("examDate").value = /^\d{4}-\d{2}-\d{2}$/.test(p.examDate) ? p.examDate : "2027-06-07";
+    $("docFs").value = p.fontSize; $("docFsVal").textContent = p.fontSize + "px";
+    $("docSp").value = p.scrollSpeed; $("docSpVal").textContent = p.scrollSpeed + "px/s";
+    $("cdShow").checked = !!p.showCountdown;
+    $("cdLabel").value = p.label || "距离高考";
+    $("docPause").checked = !!p.paused;
+    document.querySelectorAll("#posGrid .magnet").forEach(function (b) {
+      b.classList.toggle("active", b.getAttribute("data-pos") === (p.pos || "right-center"));
+    });
+    document.querySelectorAll("#sizeRow .chip").forEach(function (b) {
+      b.classList.toggle("active", b.getAttribute("data-size") === (p.size || "md"));
+    });
+    renderFileSlots();
+  }
+
   // ---------- 初始化 ----------
   function build() {
     syncControls();
@@ -296,6 +555,14 @@
     $("applyBtn").addEventListener("click", function () {
       save();
       if (ipc) ipc.send("save-config", serialize(state));
+    });
+
+    buildPresetList();
+    bindPreset();
+    renderFileSlots();
+    $("rescanBtn").addEventListener("click", function () {
+      if (window.__htmlbgHasHost) { hostSend("rescan", ""); window.__htmlbgSay("已重新扫描"); }
+      else { window.__htmlbgSay("浏览器预览模式下由页面自己上报导入点"); }
     });
 
     // 探测宿主是否存在：宿主回应 __htmlbgHasHost=true 后，导出/恢复走宿主通道
