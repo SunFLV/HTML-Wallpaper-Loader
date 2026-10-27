@@ -124,7 +124,21 @@ if (-not $have -or $ForceCredential) {
 # --- create the remote repository (optional, needs the token) -----------------
 $leaf = Split-Path -Leaf $Repo
 if ($RepoName) { $leaf = $RepoName }
+
+# If the repo already has a remote, its URL is the source of truth (never rewrite it
+# from the folder name), and the slug used for the API is derived from it.
+$existingUrl = ""
+Push-Location $Repo
+try {
+    $r = Invoke-Git remote get-url $RemoteName
+    if ($r.Code -eq 0 -and ($r.Lines -join "").Trim()) { $existingUrl = ($r.Lines -join "").Trim() }
+} finally { Pop-Location }
+
 $repoSlug = "$user/$leaf"
+if ($existingUrl) {
+    $mm = [regex]::Match($existingUrl, '[:/]([^/]+)/([^/]+?)(\.git)?/?$')
+    if ($mm.Success) { $repoSlug = ($mm.Groups[1].Value + "/" + $mm.Groups[2].Value) }
+}
 
 if ($Create) {
     $apiBase = if ($host_ -eq "github.com") { "https://api.github.com" } else { "https://$host_/api" }
@@ -192,11 +206,18 @@ try {
     $remoteUrl = "$proto" + "://" + $host_ + "/" + $repoSlug + ".git"
     $remotes = (Invoke-Git remote).Lines
     if ($remotes -contains $RemoteName) {
-        Invoke-Git remote set-url $RemoteName $remoteUrl | Out-Null
+        # Keep the existing URL; only fix it when it disagrees (e.g. -RepoName changed).
+        $cur = (Invoke-Git remote get-url $RemoteName).Lines -join ""
+        if ($cur.Trim() -ne $remoteUrl) {
+            Invoke-Git remote set-url $RemoteName $remoteUrl | Out-Null
+            Write-Host "remote url updated: $remoteUrl"
+        } else {
+            Write-Host "remote: $remoteUrl"
+        }
     } else {
         Invoke-Git remote add $RemoteName $remoteUrl | Out-Null
+        Write-Host "remote: $remoteUrl"
     }
-    Write-Host "remote: $remoteUrl"
 
     Invoke-Git add -A | Out-Null
     $staged = (Invoke-Git diff --cached --name-only).Lines | Where-Object { $_.Trim() }
@@ -230,7 +251,7 @@ try {
         Write-Host "push failed - retrying with sslBackend=schannel + no revocation check"
         $p2 = Invoke-Git "-c" "http.sslBackend=schannel" "-c" "http.schannelCheckRevoke=false" "-c" "http.sslVerify=false" push -u $RemoteName $Branch
         $p2.Lines | ForEach-Object { "  $_" }
-        if ($p2.Code -ne 0) { throw "push failed with exit $p2.Code" }
+        if ($p2.Code -ne 0) { throw ("push failed with exit code " + $p2.Code) }
     }
 
     Write-Host ""
