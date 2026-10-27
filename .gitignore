@@ -1,0 +1,13 @@
+# secrets (never commit the pusher credential)
+githubpusher/credential.txt
+githubpusher/mingit/
+
+# generated at runtime by wallpaper.ps1 from config.json
+config-inject.js
+
+# dev logs / diagnostics output
+.workbuddy/
+diag.txt
+shot.png
+verify_*.png
+frame_probe.png

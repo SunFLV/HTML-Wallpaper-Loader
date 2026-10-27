@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "source": {
+    "type": "builtin",
+    "url": "",
+    "file": "",
+    "html": ""
+  },
+  "display": {
+    "scale": 1,
+    "opacity": 1,
+    "background": "#0a0a12"
+  },
+  "behavior": {
+    "reloadMinutes": 0,
+    "hideCursor": false,
+    "clickThrough": false
+  },
+  "ui": {
+    "theme": "dark",
+    "accent": "#7c5cff"
+  },
+  "widget": {
+    "showClock": true
+  }
+}

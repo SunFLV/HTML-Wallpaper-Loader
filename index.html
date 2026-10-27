@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>HTML 壁纸加载器</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body data-theme="dark">
+  <!-- 壁纸舞台 -->
+  <div id="stage">
+    <div id="frameWrap">
+      <iframe id="frame" title="wallpaper" frameborder="0" allow="fullscreen"></iframe>
+    </div>
+  </div>
+
+  <!-- 时钟组件 -->
+  <div id="clock" class="widget">
+    <div id="clockTime">--:--</div>
+    <div id="clockDate"></div>
+  </div>
+
+  <!-- 设置按钮 -->
+  <button id="openSettings" class="fab" title="设置 (按 S 打开)">
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+      <path fill="currentColor" d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm0 6a2 2 0 1 1 0-4 2 2 0 0 1 0 4Z"/>
+      <path fill="currentColor" d="m19.4 13-.1-1 2-1.55-2-3.46-2.39.96a7.3 7.3 0 0 0-1.73-1l-.36-2.54h-4l-.36 2.54a7.3 7.3 0 0 0-1.73 1L4.6 6.99l-2 3.46 2 1.55-.1 1a7.4 7.4 0 0 0 0 2l.1 1-2 1.55 2 3.46 2.39-.96c.53.42 1.12.76 1.73 1l.36 2.54h4l.36-2.54c.61-.24 1.2-.58 1.73-1l2.39.96 2-3.46-2-1.55.1-1a7.4 7.4 0 0 0 0-2Zm-2.5 3.2-1.2.48a5.3 5.3 0 0 1-1.26.72l-.78.24-.13.86a4.6 4.6 0 0 1-1.33.2h-.4a4.6 4.6 0 0 1-1.33-.2l-.13-.86-.78-.24a5.3 5.3 0 0 1-1.26-.72l-1.2-.48-1.06.43-.63-.46.55-1.02-.06-.5a5.2 5.2 0 0 1 0-1.32l.06-.5-.55-1.02.63-.46 1.06.43 1.2-.48c.37-.27.79-.49 1.26-.72l.78-.24.13-.86a4.6 4.6 0 0 1 1.33-.2h.4c.46 0 .92.07 1.33.2l.13.86.78.24c.47.23.89.45 1.26.72l1.2.48 1.06-.43.63.46-.55 1.02.06.5c.08.43.12.87.06 1.32l-.06.5.55 1.02-.63.46-1.06-.43Z"/>
+    </svg>
+  </button>
+
+  <!-- 遮罩 -->
+  <div id="scrim" class="scrim"></div>
+
+  <!-- 设置面板 -->
+  <aside id="panel" class="panel" aria-hidden="true">
+    <header class="panel-head">
+      <div>
+        <h1>壁纸设置</h1>
+        <p class="sub">通过界面或配置文件管理你的 HTML 壁纸</p>
+      </div>
+      <button id="closePanel" class="icon-btn" title="关闭 (Esc)">&times;</button>
+    </header>
+
+    <div class="panel-body">
+      <!-- 来源 -->
+      <section class="block">
+        <h2>来源</h2>
+        <div class="tabs" id="sourceTabs">
+          <button class="tab" data-tab="url">网址</button>
+          <button class="tab" data-tab="file">本地文件</button>
+          <button class="tab" data-tab="code">HTML 代码</button>
+          <button class="tab" data-tab="builtin">内置动画</button>
+        </div>
+
+        <div class="panes">
+          <div class="pane" data-pane="url">
+            <label>网页地址</label>
+            <input id="urlInput" type="text" placeholder="https://example.com" spellcheck="false" />
+            <button id="loadUrl" class="btn">加载网址</button>
+            <p class="hint">提示：部分网站设置了禁止嵌入（X-Frame-Options），将无法作为壁纸显示。</p>
+          </div>
+
+          <div class="pane" data-pane="file">
+            <label>选择本地 HTML 文件</label>
+            <input id="fileInput" type="file" accept=".html,.htm" />
+            <label>或填写文件路径</label>
+            <input id="filePath" type="text" placeholder="相对或绝对路径，例如 wallpaper.html" spellcheck="false" />
+            <button id="loadFile" class="btn">加载文件</button>
+          </div>
+
+          <div class="pane" data-pane="code">
+            <label>HTML 代码</label>
+            <textarea id="codeInput" rows="9" placeholder="在此粘贴完整的 HTML 代码…"></textarea>
+            <button id="applyCode" class="btn">应用代码</button>
+          </div>
+
+          <div class="pane" data-pane="builtin">
+            <p class="hint">使用内置的极光动画背景。你也可以切换到「HTML 代码」自定义内容。</p>
+            <button id="useBuiltin" class="btn">使用内置动画</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 显示 -->
+      <section class="block">
+        <h2>显示</h2>
+        <label class="row">缩放 <span id="scaleVal" class="val">100%</span></label>
+        <input id="scale" type="range" min="0.1" max="3" step="0.05" value="1" />
+        <label class="row">不透明度 <span id="opacityVal" class="val">100%</span></label>
+        <input id="opacity" type="range" min="0.1" max="1" step="0.05" value="1" />
+        <label class="row">背景颜色</label>
+        <input id="bg" type="color" value="#0a0a12" />
+      </section>
+
+      <!-- 行为 -->
+      <section class="block">
+        <h2>行为</h2>
+        <label class="row">自动刷新（分钟，0 = 关闭）</label>
+        <input id="reload" type="number" min="0" step="1" value="0" />
+        <label class="check"><input id="hideCursor" type="checkbox" /> 隐藏鼠标指针</label>
+        <label class="check"><input id="clickThrough" type="checkbox" /> 点击穿透（不响应鼠标操作）</label>
+      </section>
+
+      <!-- 界面 -->
+      <section class="block">
+        <h2>界面</h2>
+        <label class="row">主题</label>
+        <select id="theme">
+          <option value="dark">暗色</option>
+          <option value="light">亮色</option>
+          <option value="system">跟随系统</option>
+        </select>
+        <label class="row">主题色</label>
+        <input id="accent" type="color" value="#7c5cff" />
+        <label class="check"><input id="showClock" type="checkbox" checked /> 显示时钟组件</label>
+      </section>
+
+      <!-- 配置 -->
+      <section class="block">
+        <h2>配置文件</h2>
+        <div class="config-actions">
+          <button id="exportBtn" class="btn ghost">导出配置</button>
+          <button id="importBtn" class="btn ghost">导入配置</button>
+          <input id="importInput" type="file" accept=".json" hidden />
+          <button id="resetBtn" class="btn ghost danger">恢复默认</button>
+        </div>
+        <p class="hint">配置同时自动保存在浏览器本地（localStorage），导出文件可在其它设备复用。</p>
+      </section>
+    </div>
+
+    <footer class="panel-foot">
+      <button id="applyBtn" class="btn primary">应用并保存</button>
+      <button id="fullscreenBtn" class="btn">全屏切换</button>
+    </footer>
+  </aside>
+
+  <script src="app.js"></script>
+</body>
+</html>
