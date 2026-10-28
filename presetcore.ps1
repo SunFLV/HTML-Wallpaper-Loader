@@ -267,19 +267,53 @@ function Send-FileBytes {
   Write-Host ("file delivered: " + (Split-Path -Leaf $path) + " (" + $bytes.Length + " bytes, " + $n + " chunks) -> slot '" + $Key + "'")
 }
 
-# Native file dialog (any document type).  ShowModal needs no WinForms owner and the
-# nested modal loop keeps pumping messages, so WebView2 keeps running.
+# Native file dialog (any document type).  ShowDialog() runs its own modal message
+# loop on the STA thread, so WebView2 keeps running while the dialog is open.
 function Open-DocumentDialog {
   param([string]$Accept = "", [string]$InitialDir = "")
-  $dlg = New-Object System.Windows.Forms.OpenFileDialog
-  $dlg.Title = '选择要显示的文件'
-  $filter = Get-FileDialogFilter -Accept $Accept
-  $dlg.Filter = $filter
-  $dlg.CheckFileExists = $true
-  $dlg.InitialDirectory = $(if ($InitialDir -and (Test-Path -LiteralPath $InitialDir)) { $InitialDir } else { $env:USERPROFILE })
-  $res = $dlg.ShowModal([System.IntPtr]::Zero)
-  if ($res -ne [System.Windows.Forms.DialogResult]::OK) { return '' }
-  return $dlg.FileName
+  try {
+    $dlg = New-Object System.Windows.Forms.OpenFileDialog
+    $dlg.Title = '选择要显示的文件'
+    $dlg.Filter = Get-FileDialogFilter -Accept $Accept
+    $dlg.CheckFileExists = $true
+    $initDir = if ($InitialDir -and (Test-Path -LiteralPath $InitialDir)) { $InitialDir } else { $env:USERPROFILE }
+    $dlg.InitialDirectory = $initDir
+
+    # NOTE: System.Windows.Forms.OpenFileDialog has ShowDialog(), NOT ShowModal()
+    # (that is a WPF method).
+    #
+    # The settings window was shown with SW_SHOWNOACTIVATE, so it is visible but is
+    # NOT the foreground window.  A modal dialog owned by a non-foreground window can
+    # open BEHIND the full-screen wallpaper (or simply never grab focus), which looks
+    # exactly like "the system file dialog does nothing".  Force the window to the
+    # front and pin it on top for the duration of the dialog so the picker is always
+    # visible and clickable; restore afterwards.
+    $owner = $null
+    if ($script:SettingsRec -and $script:SettingsRec.Form -and
+        [Win32.Native]::IsWindow($script:SettingsRec.Form.Handle)) {
+      $owner = $script:SettingsRec.Form
+      try {
+        [void][Win32.Native]::ShowWindow($owner.Handle, 9)          # SW_RESTORE
+        [void][Win32.Native]::SetForegroundWindow($owner.Handle)
+        $owner.TopMost = $true
+        $owner.BringToFront()
+        $owner.Activate()
+      } catch {}
+    }
+                        try {
+                          $res = if ($owner) { $dlg.ShowDialog($owner) } else { $dlg.ShowDialog() }
+                        } finally {
+                          if ($owner) { try { $owner.TopMost = $false } catch {} }
+                        }
+                        if ($res -ne [System.Windows.Forms.DialogResult]::OK) { return '' }
+    return $dlg.FileName
+  } catch {
+    Write-Host "Open-DocumentDialog failed: $($_.Exception.Message)"
+    if ($script:Notify) {
+      try { $script:Notify.ShowBalloonTip(4000, 'HTML 壁纸', '打开文件对话框失败：' + $_.Exception.Message, [System.Windows.Forms.ToolTipIcon]::Warning) } catch {}
+    }
+    return ''
+  }
 }
 
 function Get-FileDialogFilter {
