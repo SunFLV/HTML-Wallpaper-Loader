@@ -48,7 +48,7 @@
           </div>
           <div class="pane" data-pane="file">
             <label>选择本地 HTML 文件</label>
-            <input id="fileInput" type="file" accept=".html,.htm" />
+            <div id="htmlPickWrap"></div>
             <label>或填写文件路径</label>
             <input id="filePath" type="text" placeholder="相对或绝对路径，例如 wallpaper.html" spellcheck="false" />
             <button id="loadFile" class="btn">加载文件</button>
@@ -78,6 +78,20 @@
             <input id="examDate" type="date" value="2027-06-07" />
           </div>
           <label class="check"><input id="cdShow" type="checkbox" checked /> 显示倒计时面板</label>
+          <div id="examOnlyOpts">
+            <label class="check"><input id="cdOnly" type="checkbox" /> 只显示倒计时面板（隐藏文档区）</label>
+
+            <label class="row">面板背景色（支持 RGBA）</label>
+            <div class="cfg-row color-row">
+              <input id="panelColor" type="text" placeholder="留空=默认毛玻璃；rgba(20,18,40,0.6) / #14122a / transparent" spellcheck="false" />
+              <input id="panelColorPick" type="color" value="#14122a" title="取色（不含透明度）" />
+            </div>
+            <p class="hint">
+              留空沿用默认毛玻璃面板；填 <code>rgba(20,18,40,0.55)</code> 直接指定颜色与透明度；
+              填 <code>transparent</code> 则面板完全透明、只剩文字浮在壁纸上。
+              配合「显示 → 透明背景」勾选可露出系统壁纸。
+            </p>
+          </div>
 
           <label class="row">面板位置（点格子吸附）</label>
           <div id="posGrid" class="magnet-grid">
@@ -131,6 +145,12 @@
 
       <section class="block">
         <h2>显示</h2>
+        <label class="check"><input id="transparent" type="checkbox" /> 透明背景（露出系统壁纸）</label>
+        <p class="hint">
+          勾选后壁纸窗口的<b>背景色被抠掉</b>，直接显示 Windows 原本的桌面壁纸，页面上只留下文字和面板。
+          注意：抠像按纯黑色做，所以面板请用<b>不透明颜色</b>（如 <code>rgb(20,18,40)</code>）或
+          <code>transparent</code>；半透明 rgba 面板会偏暗。
+        </p>
         <label class="row">缩放 <span id="scaleVal" class="val">100%</span></label>
         <input id="scale" type="range" min="0.1" max="3" step="0.05" value="1" />
         <label class="row">不透明度 <span id="opacityVal" class="val">100%</span></label>

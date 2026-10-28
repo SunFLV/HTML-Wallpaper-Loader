@@ -270,11 +270,11 @@ function Send-FileBytes {
 # Native file dialog (any document type).  ShowDialog() runs its own modal message
 # loop on the STA thread, so WebView2 keeps running while the dialog is open.
 function Open-DocumentDialog {
-  param([string]$Accept = "", [string]$InitialDir = "")
+  param([string]$Accept = "", [string]$InitialDir = "", [string]$Filter = "", [string]$Title = '选择要显示的文件')
   try {
     $dlg = New-Object System.Windows.Forms.OpenFileDialog
-    $dlg.Title = '选择要显示的文件'
-    $dlg.Filter = Get-FileDialogFilter -Accept $Accept
+    $dlg.Title = $Title
+    $dlg.Filter = if ($Filter) { $Filter } else { Get-FileDialogFilter -Accept $Accept }
     $dlg.CheckFileExists = $true
     $initDir = if ($InitialDir -and (Test-Path -LiteralPath $InitialDir)) { $InitialDir } else { $env:USERPROFILE }
     $dlg.InitialDirectory = $initDir

@@ -194,8 +194,8 @@
 
   var DEFAULTS = {
     id: "exam-dock", examDate: "2027-06-07", docPath: "", fontSize: 22,
-    scrollSpeed: 26, showCountdown: true, label: "距离高考",
-    pos: "right-center", size: "md", paused: false
+    scrollSpeed: 26, showCountdown: true, countdownOnly: false, panelColor: "",
+    label: "距离高考", pos: "right-center", size: "md", paused: false
   };
   var P = Object.assign({}, DEFAULTS);
   var LOCAL_KEY = "htmlbg-preset-exam-dock-v1";
@@ -203,6 +203,10 @@
   var input = $("docInput");
   var inner = $("docInner");
   var box = $("doc");
+
+  // #dock 的默认毛玻璃渐变要在被「面板背景色」覆盖前原样抓下来，清空时还原它
+  var DOCK_DEFAULT_BG = getComputedStyle($("dock")).backgroundImage ||
+    "linear-gradient(160deg, rgba(22,20,44,.62), rgba(12,11,26,.52))";
 
   // ------------------------------------------------------------------ config ----
   function applyPreset(p) {
@@ -213,6 +217,31 @@
     $("cdLabel").textContent = P.label || DEFAULTS.label;
     var dock = $("dock");
     dock.className = "p-" + (P.pos || "right-center") + " s-" + (P.size || "md");
+    // 「只显示倒计时面板」：隐藏文档区，面板高度收缩到内容
+    var only = !!P.countdownOnly;
+    $("reader").style.display = only ? "none" : "";
+    dock.style.height = only ? "auto" : "";
+    dock.style.gap = only ? "0" : "";
+    // 「面板背景色」：留空=默认毛玻璃；transparent=完全透明；rgba(...)/#hex 直接生效。
+    // 注意宿主「透明背景」按纯黑抠像，半透明 rgba 面板会显得偏暗（设置里有提示）。
+    var pc = String(P.panelColor || "").trim();
+    if (!pc) {
+      dock.style.backgroundImage = DOCK_DEFAULT_BG;
+      dock.style.backgroundColor = "transparent";
+      dock.style.backdropFilter = "";
+      dock.style.webkitBackdropFilter = "";
+    } else if (pc === "transparent" || pc === "none") {
+      dock.style.backgroundImage = "none";
+      dock.style.backgroundColor = "transparent";
+      // 完全透明时毛玻璃模糊也一并关掉，露出干净的背景
+      dock.style.backdropFilter = "none";
+      dock.style.webkitBackdropFilter = "none";
+    } else {
+      dock.style.backgroundImage = "none";
+      dock.style.backgroundColor = pc;
+      dock.style.backdropFilter = "";
+      dock.style.webkitBackdropFilter = "";
+    }
     inner.style.fontSize = (P.fontSize || 22) + "px";
     scroller.setPaused(!!P.paused);
     if (solo) {

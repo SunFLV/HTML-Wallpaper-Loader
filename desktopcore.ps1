@@ -268,6 +268,7 @@ $WS_EX_NOACT    = 0x08000000
 $WS_EX_APPWINDOW= 0x00040000
 $WS_EX_LAYERED  = 0x00080000   # bit 0x80000 == WS_EX_NOREDIRECTIONBITMAP on Progman (raised desktop)
 $LWA_ALPHA      = 0x00000002
+$LWA_COLORKEY   = 0x00000001
 $GWL_STYLE      = -16
 $GWL_EXSTYLE    = -20
 $SWP_NOACTIVATE   = 0x0010
@@ -522,11 +523,47 @@ function Enable-LayeredIfRaisedDesktop {
     $pe = [Win32.Native]::GetWindowLong($h, $GWL_EXSTYLE)
     if (($pe -band 0x00080000) -ne 0) { $need = $true; break }
   }
+  # Remembered so that turning transparency OFF does not strip WS_EX_LAYERED on a
+  # raised desktop (that would make the wallpaper vanish again).
+  $script:NeedLayered = $need
   if ($need) {
     $ex = [Win32.Native]::GetWindowLong($Hwnd, $GWL_EXSTYLE)
     [void][Win32.Native]::SetWindowLong($Hwnd, $GWL_EXSTYLE, [int]($ex -bor $WS_EX_LAYERED))
     [void][Win32.Native]::SetLayeredWindowAttributes($Hwnd, 0, 255, $LWA_ALPHA)
   }
+}
+
+# "Transparent wallpaper" mode: punch out the page's background so the SYSTEM
+# wallpaper shows through underneath (this window sits above the wallpaper painter
+# and below the icons, so its transparent pixels reveal the real wallpaper).
+#
+# Implementation: WS_EX_LAYERED + LWA_COLORKEY on pure black.  In transparent mode
+# wallpaper.js paints the page background as exactly #000000, so those pixels are
+# keyed out and everything else (text, panels) composites normally.
+#
+# Caveat worth knowing: colour-key compositing has no per-pixel alpha, so a
+# semi-transparent panel (rgba) blends against the black page background, i.e. it
+# looks like a dark translucent panel over the wallpaper rather than a true blend.
+# Use an OPAQUE panel colour, or 'transparent', to let the wallpaper show fully.
+$script:NeedLayered = $false
+function Set-WallpaperTransparency {
+  param([IntPtr]$Hwnd, [bool]$On)
+  if ($Hwnd -eq [IntPtr]::Zero -or -not [Win32.Native]::IsWindow($Hwnd)) { return $false }
+  $ex = [Win32.Native]::GetWindowLong($Hwnd, $GWL_EXSTYLE)
+  if ($On) {
+    if (($ex -band $WS_EX_LAYERED) -eq 0) {
+      [void][Win32.Native]::SetWindowLong($Hwnd, $GWL_EXSTYLE, [int]($ex -bor $WS_EX_LAYERED))
+    }
+    return [Win32.Native]::SetLayeredWindowAttributes($Hwnd, 0, 255, ($LWA_COLORKEY -bor $LWA_ALPHA))
+  }
+  if ($script:NeedLayered) {
+    # raised desktop still needs the layered bit - drop only the colour key
+    return [Win32.Native]::SetLayeredWindowAttributes($Hwnd, 0, 255, $LWA_ALPHA)
+  }
+  if (($ex -band $WS_EX_LAYERED) -ne 0) {
+    [void][Win32.Native]::SetWindowLong($Hwnd, $GWL_EXSTYLE, [int]($ex -band (-bnot $WS_EX_LAYERED)))
+  }
+  return $true
 }
 
 function Find-IconWorker {

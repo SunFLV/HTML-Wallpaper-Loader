@@ -7,7 +7,7 @@
     return {
       version: 1,
       source: { type: "builtin", url: "", file: "", html: "" },
-      display: { scale: 1, opacity: 1, background: "#0a0a12" },
+      display: { scale: 1, opacity: 1, background: "#0a0a12", transparent: false },
       behavior: { reloadMinutes: 0, hideCursor: false, clickThrough: false },
       ui: { theme: "dark", accent: "#7c5cff" },
       widget: { showClock: true },
@@ -18,6 +18,8 @@
         fontSize: 22,
         scrollSpeed: 26,
         showCountdown: true,
+        countdownOnly: false,
+        panelColor: "",
         label: "距离高考",
         pos: "right-center",
         size: "md",
@@ -79,7 +81,11 @@
   // <input type=file>（宿主拿不到那种选择结果），导致「选择文件」按钮不出现。
   // 宿主每次推送都会重申一次，所以只在标志真正翻转时重绘，免得拖滑块时反复重建 DOM。
   window.__htmlbgHostReady = function () {
-    if (!window.__htmlbgHasHost) { window.__htmlbgHasHost = true; renderFileSlots(); }
+    if (!window.__htmlbgHasHost) {
+      window.__htmlbgHasHost = true;
+      renderFileSlots();
+      renderHtmlPick();
+    }
     return "ok";
   };
 
@@ -367,6 +373,31 @@
     reader.readAsText(f);
   }
 
+  // 「选择本地 HTML 文件」：与文件导入同款。真实运行时由宿主打开原生对话框，把绝对
+  // 路径回填到下面的路径框；浏览器预览里仍用页面自己的 <input type=file>。
+  function renderHtmlPick() {
+    var box = $("htmlPickWrap");
+    if (!box) return;
+    box.innerHTML = "";
+    if (window.__htmlbgHasHost) {
+      var choose = document.createElement("button");
+      choose.className = "btn slot-choose";
+      choose.textContent = "选择文件";
+      choose.addEventListener("click", function () {
+        hostSend("pickhtml", "");
+        window.__htmlbgSay("在弹出的对话框里选择 HTML 文件…");
+      });
+      box.appendChild(choose);
+    } else {
+      var finput = document.createElement("input");
+      finput.id = "fileInput";
+      finput.type = "file";
+      finput.accept = ".html,.htm";
+      finput.addEventListener("change", onFilePicked);
+      box.appendChild(finput);
+    }
+  }
+
   function loadFilePath() {
     var v = $("filePath").value.trim();
     if (!v) return;
@@ -403,6 +434,9 @@
     $("bg").addEventListener("input", function () {
       state.display.background = this.value; save();
     });
+    $("transparent").addEventListener("change", function () {
+      state.display.transparent = this.checked; save();
+    });
     $("reload").addEventListener("input", function () {
       state.behavior.reloadMinutes = Math.max(0, parseInt(this.value, 10) || 0); save();
     });
@@ -426,6 +460,7 @@
     $("opacity").value = state.display.opacity;
     $("opacityVal").textContent = Math.round(state.display.opacity * 100) + "%";
     $("bg").value = state.display.background;
+    $("transparent").checked = !!state.display.transparent;
     $("reload").value = state.behavior.reloadMinutes;
     $("hideCursor").checked = state.behavior.hideCursor;
     $("clickThrough").checked = state.behavior.clickThrough;
@@ -544,6 +579,23 @@
     $("cdShow").addEventListener("change", function () {
       state.preset.showCountdown = this.checked; save();
     });
+    $("cdOnly").addEventListener("change", function () {
+      state.preset.countdownOnly = this.checked;
+      // 「只显示倒计时」和「显示倒计时」互斥时以 countdownOnly 为准，顺手勾上显示
+      if (this.checked && !state.preset.showCountdown) {
+        state.preset.showCountdown = true;
+        $("cdShow").checked = true;
+      }
+      save();
+    });
+    $("panelColor").addEventListener("input", function () {
+      state.preset.panelColor = this.value.trim(); save();
+    });
+    $("panelColorPick").addEventListener("input", function () {
+      // 取色器不含透明度，写进文本框后可再手动补 rgba(...)
+      $("panelColor").value = this.value;
+      state.preset.panelColor = this.value; save();
+    });
     $("cdLabel").addEventListener("change", function () {
       state.preset.label = this.value.trim() || "距离高考"; save();
     });
@@ -579,6 +631,11 @@
     $("cdShow").checked = !!p.showCountdown;
     $("cdLabel").value = p.label || "距离高考";
     $("docPause").checked = !!p.paused;
+    // 「只显示倒计时面板」和「面板背景色」只属于高考倒计时预设
+    var examOnly = $("examOnlyOpts");
+    if (examOnly) examOnly.classList.toggle("off", p.id !== "exam-dock");
+    $("cdOnly").checked = !!p.countdownOnly;
+    $("panelColor").value = p.panelColor || "";
     document.querySelectorAll("#posGrid .magnet").forEach(function (b) {
       b.classList.toggle("active", b.getAttribute("data-pos") === (p.pos || "right-center"));
     });
@@ -597,7 +654,7 @@
     });
     $("loadUrl").addEventListener("click", loadUrl);
     $("urlInput").addEventListener("keydown", function (e) { if (e.key === "Enter") loadUrl(); });
-    $("fileInput").addEventListener("change", onFilePicked);
+    renderHtmlPick();
     $("loadFile").addEventListener("click", loadFilePath);
     $("applyCode").addEventListener("click", applyCode);
     $("useBuiltin").addEventListener("click", useBuiltin);

@@ -23,6 +23,8 @@
         fontSize: 22,
         scrollSpeed: 26,
         showCountdown: true,
+        countdownOnly: false,
+        panelColor: "",
         label: "距离高考",
         pos: "right-center",
         size: "md",

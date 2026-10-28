@@ -55,7 +55,9 @@
   function applyDisplay(d) {
     frameWrap.style.transform = "scale(" + (d.scale || 1) + ")";
     frameWrap.style.opacity = String(d.opacity != null ? d.opacity : 1);
-    stage.style.background = d.background || "#0a0a12";
+    // 透明背景模式：宿主把壁纸窗口按纯黑抠像（LWA_COLORKEY），所以这里必须画
+    // 成 #000000，这些像素才会露出 Windows 系统壁纸；其余模式用用户选的背景色。
+    stage.style.background = d.transparent ? "#000000" : (d.background || "#0a0a12");
   }
 
   function applyConfig(cfg) {
@@ -178,13 +180,13 @@
   var STORAGE_KEY = "html-wallpaper-config-v1";
   var DEFAULTS = {
     source: { type: "builtin", url: "", file: "", html: "" },
-    display: { scale: 1, opacity: 1, background: "#0a0a12" },
+    display: { scale: 1, opacity: 1, background: "#0a0a12", transparent: false },
     behavior: { reloadMinutes: 0, hideCursor: false, clickThrough: false },
     ui: { theme: "dark", accent: "#7c5cff" },
     preset: {
       id: "", examDate: "2027-06-07", docPath: "", fontSize: 22,
-      scrollSpeed: 26, showCountdown: true, label: "距离高考",
-      pos: "right-center", size: "md", paused: false
+      scrollSpeed: 26, showCountdown: true, countdownOnly: false, panelColor: "",
+      label: "距离高考", pos: "right-center", size: "md", paused: false
     },
     files: {}
   };

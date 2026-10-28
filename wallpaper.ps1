@@ -197,6 +197,12 @@ $cfgPath = Join-Path $ScriptDir 'config.json'
 if (Test-Path -LiteralPath $cfgPath) {
   try { $script:Config = (Get-Content -LiteralPath $cfgPath -Raw) } catch { $script:Config = $null }
 }
+# Remember the saved transparency mode.  The wallpaper window is not attached yet
+# at this point, so we only set the flag; the first watchdog ticks (which re-fit on
+# WatchTicks <= 10) and the "page rendered" branch below call Apply-Transparency.
+try {
+  if ($script:Config) { $script:Transparent = [bool](($script:Config | ConvertFrom-Json).display.transparent) }
+} catch {}
 $script:CfgDirtyAt = $null
 $script:PageSlots = $null
 
@@ -212,6 +218,20 @@ $script:PageSlots = $null
 # the flag + re-rendering is idempotent, so calling this repeatedly is harmless).
 function Mark-HostToSettings {
   Push-ScriptTo $script:SettingsRec "try{window.__htmlbgHasHost=true;window.__htmlbgHostReady&&window.__htmlbgHostReady();}catch(e){}"
+}
+
+# --------------------------------------------------------- transparency mode
+# display.transparent = true  ->  punch the page background out of the wallpaper
+# window (WS_EX_LAYERED + LWA_COLORKEY on black) so the SYSTEM wallpaper shows
+# through underneath.  wallpaper.js paints the stage as pure black in that mode;
+# every black pixel becomes see-through.
+$script:Transparent = $false
+function Apply-Transparency {
+  param([bool]$On = $script:Transparent)
+  $script:Transparent = [bool]$On
+  $h = Get-BrowserWindowHandle $script:WallpaperRec
+  if ($h -eq [IntPtr]::Zero) { return }
+  try { [void](Set-WallpaperTransparency $h $script:Transparent) } catch { Write-Host "transparency failed: $($_.Exception.Message)" }
 }
 
 function Invoke-HostMessage {
@@ -237,6 +257,11 @@ function Invoke-HostMessage {
       $script:CfgCount++
       if ($script:CfgCount -le 5) { Write-Host "config forwarded to wallpaper (#$($script:CfgCount), $($json.Length) bytes)" }
       Push-ScriptTo $script:WallpaperRec "try{window.__htmlbgApplyCfg && window.__htmlbgApplyCfg(decodeURIComponent('$([System.Uri]::EscapeDataString($json))'));}catch(e){}"
+      # display.transparent -> see through the wallpaper window to the system wallpaper
+      try {
+        $want = [bool](($json | ConvertFrom-Json).display.transparent)
+        if ($want -ne $script:Transparent) { Apply-Transparency $want; Write-Host "transparency -> $want" }
+      } catch {}
       # 'cfg' is the message that is guaranteed to arrive on every settings-window
       # open (the page reports its config right after load), so it doubles as the
       # reliable place to assert "a host exists" and render 「选择文件」.
@@ -325,6 +350,19 @@ function Invoke-HostMessage {
           Write-Host ("file bound: '" + $key + "' -> " + $path)
         }
         Push-ScriptTo $script:SettingsRec "try{window.__htmlbgFilePicked && window.__htmlbgFilePicked(decodeURIComponent('$([Uri]::EscapeDataString((Convert-ToJsonString $key)))'),decodeURIComponent('$([Uri]::EscapeDataString((Convert-ToJsonString $path)))'));}catch(e){}"
+      }
+      Push-ScriptTo $Rec $ack
+    }
+    'pickhtml' {
+      # 「选择本地 HTML 文件」用的原生对话框：与文件导入同款，由宿主打开、把绝对路径
+      # 回填到设置里的路径框（浏览器预览里仍用页面自己的 <input type=file>）。
+      try {
+        $path = Open-DocumentDialog -Title '选择 HTML 文件' `
+                                    -Filter 'HTML 文件 (*.html;*.htm)|*.html;*.htm|所有文件 (*.*)|*.*'
+      } catch { $path = '' }
+      if ($path) {
+        Push-ScriptTo $Rec "try{var f=document.getElementById('filePath'); if(f){f.value=decodeURIComponent('$([Uri]::EscapeDataString($path))');} window.__htmlbgSay&&window.__htmlbgSay('已选择：'+decodeURIComponent('$([Uri]::EscapeDataString((Split-Path -Leaf $path)))')+'，点「加载文件」应用');}catch(e){}"
+        Write-Host ("html source picked: " + $path)
       }
       Push-ScriptTo $Rec $ack
     }
@@ -648,6 +686,8 @@ function Tick-All {
   if ($refresh) {
     if ($drift) { $script:Targets = Get-DesktopTargets }
     [void](Attach-Wallpaper $script:AttachMode)
+    # re-attaching re-applies the layered attributes, so keep transparency in sync
+    if ($script:Transparent) { Apply-Transparency $true }
   }
 }
 
