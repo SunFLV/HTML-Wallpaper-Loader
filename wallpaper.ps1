@@ -203,15 +203,16 @@ if (Test-Path -LiteralPath $cfgPath) {
 # this point, so we only set the flag; the first watchdog ticks (which re-fit on
 # WatchTicks <= 10) and the config handler call Apply-PanelFit.
 # display.transparent is the older name of the same idea and is still accepted.
-try {
-  if ($script:Config) {
-    $c0 = $script:Config | ConvertFrom-Json
-    $fit = $false
-    if ($c0.preset -and $c0.preset.fitPanel) { $fit = $true }
-    if ($c0.display -and $c0.display.transparent) { $fit = $true }
-    $script:PanelFit = [bool]$fit
-  }
-} catch {}
+  try {
+    if ($script:Config) {
+      $c0 = $script:Config | ConvertFrom-Json
+      $fit = $false
+      if ($c0.preset -and $c0.preset.fitPanel) { $fit = $true }
+      if ($c0.display -and $c0.display.transparent) { $fit = $true }
+      $script:PanelFit = [bool]$fit
+      if ($c0.display -and $c0.display.useWallpaper) { $script:UseWallpaper = $true }
+    }
+  } catch {}
 $script:CfgDirtyAt = $null
 $script:PageSlots = $null
 
@@ -299,9 +300,74 @@ function Apply-PanelFit {
       }
     }
   } catch { Write-Host "panel fit failed: $($_.Exception.Message)" }
+  # the window may have moved/resized - the wallpaper picture has to follow it
+  if ($script:UseWallpaper) { Push-WallpaperLayout }
   if ($script:PanelFit -and $rect.Count -ge 4) {
     Write-Host ("panel fit: window clipped to {0}x{1} at {2},{3} - the rest shows your own wallpaper" -f $rect[2], $rect[3], $rect[0], $rect[1])
   }
+}
+
+# -------------------------------------------- system wallpaper as page background
+# display.useWallpaper = true  ->  the host grabs the CURRENT Windows wallpaper,
+# downscales it and hands the JPEG to the page, which paints it as the stage
+# background.  The panel's backdrop-filter then blurs the real wallpaper picture -
+# proper frosted glass, instead of blurring a flat colour.  (Just leaving the
+# desktop visible outside a clipped window cannot do that: backdrop-filter can only
+# blur what is painted behind the panel *inside our own page*.)
+$script:UseWallpaper        = $false
+$script:WallpaperImageSent  = $false
+$script:WallpaperSentPath   = ''
+$script:WallpaperFails      = 0
+$script:WallpaperChunkChars = 196608   # 144 KB of base64 per ExecuteScriptAsync call
+
+function Push-WallpaperImage {
+  if (-not $script:WallpaperRec -or $script:WallpaperRec.Engine -ne 'webview2') { return $false }
+  if (-not $script:WallpaperRec.Ready -or $script:WallpaperRec.Dead) { return $false }
+  $path = Get-SystemWallpaperPath
+  if (-not $path) {
+    Write-Host 'system wallpaper: Windows reports no image file (solid colour / slideshow) - keeping the flat background'
+    return $false
+  }
+  $vs = Get-VirtualScreen
+  $maxW = 1920; if ($vs[2] -lt $maxW -and $vs[2] -gt 0) { $maxW = $vs[2] }
+  $bytes = Get-WallpaperJpegBytes -Path $path -MaxWidth $maxW -Quality 80
+  if (-not $bytes -or $bytes.Length -eq 0) { return $false }
+  $b64 = [Convert]::ToBase64String($bytes)
+  $n = [Math]::Max(1, [int][Math]::Ceiling($b64.Length / $script:WallpaperChunkChars))
+  Push-ScriptTo $script:WallpaperRec "try{window.__htmlbgWallpaperBegin&&window.__htmlbgWallpaperBegin($n);}catch(e){}"
+  for ($i = 0; $i -lt $n; $i++) {
+    $part = $b64.Substring($i * $script:WallpaperChunkChars,
+                           [Math]::Min($script:WallpaperChunkChars, $b64.Length - ($i * $script:WallpaperChunkChars)))
+    Push-ScriptTo $script:WallpaperRec ("try{window.__htmlbgWallpaperChunk&&window.__htmlbgWallpaperChunk('" + $part + "'," + $i + ");}catch(e){}")
+  }
+  Push-ScriptTo $script:WallpaperRec "try{window.__htmlbgWallpaperEnd&&window.__htmlbgWallpaperEnd();}catch(e){}"
+  $script:WallpaperSentPath = $path
+  Write-Host ("system wallpaper sent: " + (Split-Path -Leaf $path) + " (" + [Math]::Round($bytes.Length / 1KB) + " KB, " + $n + " chunk(s))")
+  return $true
+}
+
+# The page paints the wallpaper image at full screen size, so it has to know where
+# on screen our window sits right now - in "panel only" mode the window is only the
+# panel, and the slice of the picture shown there must line up with the real one.
+function Push-WallpaperLayout {
+  if (-not $script:WallpaperRec -or $script:WallpaperRec.Engine -ne 'webview2') { return }
+  $h = Get-BrowserWindowHandle $script:WallpaperRec
+  if ($h -eq [IntPtr]::Zero) { return }
+  $r = New-Object 'Win32.Native+RECT'
+  if (-not [Win32.Native]::GetWindowRect($h, [ref]$r)) { return }
+  $vs = Get-VirtualScreen
+  $ox = $r.Left - $vs[0]
+  $oy = $r.Top - $vs[1]
+  # where the panel sits inside the page (page coords = panel screen pos - window pos)
+  $px = -1; $py = -1; $pw = 0; $ph = 0
+  $rect = Get-PanelFitRect
+  if ($rect.Count -ge 4) {
+    $px = $vs[0] + $rect[0] - $r.Left
+    $py = $vs[1] + $rect[1] - $r.Top
+    $pw = $rect[2]; $ph = $rect[3]
+  }
+  $fit = if ($script:PanelFit) { 1 } else { 0 }
+  Push-ScriptTo $script:WallpaperRec "try{window.__htmlbgWallpaperLayout&&window.__htmlbgWallpaperLayout($($vs[2]),$($vs[3]),$ox,$oy,$px,$py,$pw,$ph,$fit);}catch(e){}"
 }
 
 function Invoke-HostMessage {
@@ -345,6 +411,23 @@ function Invoke-HostMessage {
           $script:PanelFitKey = ''
           Apply-PanelFit $false
           Write-Host "panel fit -> off"
+        }
+      } catch {}
+      # display.useWallpaper -> hand the real wallpaper picture to the page
+      try {
+        $c2 = $json | ConvertFrom-Json
+        $wantWp = [bool]($c2.display -and $c2.display.useWallpaper)
+        $script:UseWallpaper = $wantWp
+        if ($wantWp) {
+          if (-not $script:WallpaperImageSent) {
+            if (Push-WallpaperImage) { $script:WallpaperImageSent = $true }
+          }
+          Push-WallpaperLayout
+        } else {
+          # switched off: drop the cached picture so switching it back on re-sends
+          $script:WallpaperImageSent = $false
+          $script:WallpaperSentPath = ''
+          $script:WallpaperFails = 0
         }
       } catch {}
       # 'cfg' is the message that is guaranteed to arrive on every settings-window
@@ -693,6 +776,34 @@ function Tick-All {
   # close the very window that owns the dialog, so skip ticks while busy.
   if ($script:Busy) { return }
   try { Update-BrowserWindows } catch { Write-Host "browser update error: $($_.Exception.Message)" }
+
+  # ---- hand the system wallpaper picture to the page (once it can receive it) ---
+  if ($script:UseWallpaper) {
+    # A failure almost always means "Windows has no wallpaper FILE" (solid colour /
+    # slideshow), so retry quietly and rarely instead of spamming the log.
+    $wpEvery = if ($script:WallpaperFails -ge 2) { 150 } else { 25 }
+    if (-not $script:WallpaperImageSent) {
+      if (($script:WatchTicks % $wpEvery) -eq 0 -and
+          $script:WallpaperRec -and $script:WallpaperRec.Ready -and -not $script:WallpaperRec.Dead) {
+        if (Push-WallpaperImage) {
+          $script:WallpaperImageSent = $true
+          $script:WallpaperFails = 0
+          Push-WallpaperLayout
+        } else {
+          $script:WallpaperFails++
+        }
+      }
+    } elseif ($script:WatchTicks % 150 -eq 0) {
+      # the user may switch the desktop wallpaper while we run: re-check the path
+      # every ~30 s and re-send when Windows points at a different file
+      $p = Get-SystemWallpaperPath
+      if ($p -and $p -ne $script:WallpaperSentPath) {
+        Write-Host 'system wallpaper changed - re-sending it to the page'
+        $script:WallpaperImageSent = $false
+        $script:WallpaperFails = 0
+      }
+    }
+  }
 
   # ---- preset option changes are persisted with a short delay -----------------
   # Dragging a slider in the preset page fires a message per step; writing config.json

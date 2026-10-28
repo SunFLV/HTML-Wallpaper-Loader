@@ -52,14 +52,118 @@
     frame.src = src;
   }
 
+  // ---------------------------------------------------- system wallpaper backdrop
+  // The host sends the current Windows wallpaper as base64 chunks; we paint it as
+  // the stage background at full screen size, offset by where our window sits, so
+  // it lines up pixel for pixel with the real desktop.  The panel's
+  // backdrop-filter then blurs the actual wallpaper picture (= real frosted glass)
+  // instead of blurring a flat colour.
+  var wpParts = [];
+  var wpCount = 0;
+  var wpUrl = "";
+  var wpLayout = null;   // { sw, sh, ox, oy }
+
+  window.__htmlbgWallpaperBegin = function (n) { wpParts = []; wpCount = n || 0; return "ok"; };
+  window.__htmlbgWallpaperChunk = function (part, i) {
+    if (typeof part === "string") { wpParts[i] = part; }
+    return "ok";
+  };
+  window.__htmlbgWallpaperEnd = function () {
+    try {
+      var data = wpParts.join("");
+      wpParts = [];
+      if (!data) { return "empty"; }
+      wpUrl = "data:image/jpeg;base64," + data;
+      applyWallpaper();
+      return "ok";
+    } catch (e) { return "err"; }
+  };
+  window.__htmlbgWallpaperLayout = function (sw, sh, ox, oy, px, py, pw, ph, fit) {
+    wpLayout = { sw: sw, sh: sh, ox: ox, oy: oy, px: px, py: py, pw: pw, ph: ph, fit: !!fit };
+    applyWallpaper();
+    return "ok";
+  };
+
+  // 毛玻璃卡片必须画在**宿主页面**里：iframe 内的 backdrop-filter 只能看到 iframe
+  // 自己的内容（iframe 的文档根就是一个 backdrop root），糊不到父页面的壁纸。
+  // 所以这里用一张「放大一圈的壁纸副本 + CSS filter: blur()」塞进圆角容器，
+  // 容器边缘 overflow:hidden，得到干净的圆角毛玻璃。
+  var glassEl = null;
+  var glassImg = null;
+  function ensureGlass() {
+    if (glassEl) { return; }
+    glassEl = document.createElement("div");
+    glassEl.id = "htmlbgGlass";
+    glassEl.style.cssText = "position:absolute;overflow:hidden;pointer-events:none;display:none;";
+    glassImg = document.createElement("div");
+    glassImg.style.cssText = "position:absolute;background-repeat:no-repeat;";
+    var tint = document.createElement("div");
+    tint.style.cssText = "position:absolute;inset:0;background:linear-gradient(160deg,rgba(22,20,44,.30),rgba(12,11,26,.22));";
+    glassEl.appendChild(glassImg);
+    glassEl.appendChild(tint);
+    stage.insertBefore(glassEl, frameWrap);
+  }
+
+  function applyGlass() {
+    ensureGlass();
+    var d = (currentCfg && currentCfg.display) || {};
+    var on = !!d.useWallpaper && !!wpUrl && !!(wpLayout && wpLayout.pw > 0 && wpLayout.ph > 0);
+    if (!on) { glassEl.style.display = "none"; return; }
+    var L = wpLayout;
+    var bleed = 80;                       // 模糊会向外溢出，多给一圈免得边缘发虚
+    var blur = (d.glassBlur != null) ? d.glassBlur : 18;
+    glassEl.style.display = "block";
+    glassEl.style.left = L.px + "px";
+    glassEl.style.top = L.py + "px";
+    glassEl.style.width = L.pw + "px";
+    glassEl.style.height = L.ph + "px";
+    glassEl.style.borderRadius = (L.fit ? 0 : 20) + "px";
+    glassImg.style.left = (-bleed) + "px";
+    glassImg.style.top = (-bleed) + "px";
+    glassImg.style.right = (-bleed) + "px";
+    glassImg.style.bottom = (-bleed) + "px";
+    glassImg.style.backgroundImage = 'url("' + wpUrl + '")';
+    glassImg.style.backgroundSize = L.sw + "px " + L.sh + "px";
+    // 壁纸图的左上角在页面坐标 (-ox,-oy)；这张副本相对容器又外扩了 bleed
+    glassImg.style.backgroundPosition = (bleed - L.ox - L.px) + "px " + (bleed - L.oy - L.py) + "px";
+    glassImg.style.filter = "blur(" + blur + "px) saturate(140%)";
+  }
+
+  function applyWallpaper() {
+    var use = !!(currentCfg && currentCfg.display && currentCfg.display.useWallpaper);
+    if (!use || !wpUrl) {
+      stage.style.backgroundImage = "";
+      stage.style.backgroundSize = "";
+      stage.style.backgroundPosition = "";
+      applyGlass();
+      return;
+    }
+    var sw = (wpLayout && wpLayout.sw) || window.innerWidth;
+    var sh = (wpLayout && wpLayout.sh) || window.innerHeight;
+    var ox = (wpLayout && wpLayout.ox) || 0;
+    var oy = (wpLayout && wpLayout.oy) || 0;
+    stage.style.backgroundImage = 'url("' + wpUrl + '")';
+    stage.style.backgroundSize = sw + "px " + sh + "px";
+    stage.style.backgroundPosition = (-ox) + "px " + (-oy) + "px";
+    stage.style.backgroundRepeat = "no-repeat";
+    applyGlass();
+  }
+
   function applyDisplay(d) {
     frameWrap.style.transform = "scale(" + (d.scale || 1) + ")";
     frameWrap.style.opacity = String(d.opacity != null ? d.opacity : 1);
     stage.style.background = d.background || "#0a0a12";
+    // 毛玻璃强度：面板的 backdrop-filter 用这个变量，0 就是完全不模糊
+    var blur = (d.glassBlur != null) ? d.glassBlur : 18;
+    document.documentElement.style.setProperty("--glass-blur", blur + "px");
+    applyWallpaper();
   }
+
+  var currentCfg = null;
 
   function applyConfig(cfg) {
     if (!cfg) return;
+    currentCfg = cfg;
     applySource(cfg.source || {});
     applyDisplay(cfg.display || {});
     document.body.setAttribute("data-theme", resolveTheme(cfg.ui && cfg.ui.theme));
@@ -129,6 +233,7 @@
       type: "config",
       preset: (cfg && cfg.preset) || null,
       files: fileToSlots(cfg && cfg.files),
+      glassBlur: (cfg && cfg.display && cfg.display.glassBlur != null) ? cfg.display.glassBlur : 18,
       meta: { accent: cfg && cfg.ui && cfg.ui.accent, desktop: true }
     };
     pendingToIframe.push(msg);
@@ -178,7 +283,7 @@
   var STORAGE_KEY = "html-wallpaper-config-v1";
   var DEFAULTS = {
     source: { type: "builtin", url: "", file: "", html: "" },
-    display: { scale: 1, opacity: 1, background: "#0a0a12" },
+    display: { scale: 1, opacity: 1, background: "#0a0a12", useWallpaper: false, glassBlur: 18 },
     behavior: { reloadMinutes: 0, hideCursor: false, clickThrough: false },
     ui: { theme: "dark", accent: "#7c5cff" },
     preset: {

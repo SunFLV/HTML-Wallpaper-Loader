@@ -162,6 +162,17 @@
 
       <section class="block">
         <h2>显示</h2>
+        <label class="check"><input id="useWallpaper" type="checkbox" /> 使用系统壁纸作背景</label>
+        <p class="hint">
+          勾选后宿主会读取你 Windows <b>当前的桌面壁纸图片</b>，缩放后交给页面当背景，
+          面板的毛玻璃糊的就是这张真图（相当于"透过毛玻璃看到壁纸"）。
+          换壁纸后约 30 秒自动同步。若系统壁纸是纯色 / 幻灯片，Windows 不给图片文件，会保留纯色背景。
+        </p>
+        <label class="row">毛玻璃强度 <span id="glassBlurVal" class="val">18px</span></label>
+        <input id="glassBlur" type="range" min="0" max="40" step="1" value="18" />
+        <p class="hint">
+          0 = 完全不模糊（面板背后就是清晰的壁纸），数值越大越糊。只在上面勾选「使用系统壁纸作背景」时看得到效果。
+        </p>
         <label class="row">缩放 <span id="scaleVal" class="val">100%</span></label>
         <input id="scale" type="range" min="0.1" max="3" step="0.05" value="1" />
         <label class="row">不透明度 <span id="opacityVal" class="val">100%</span></label>

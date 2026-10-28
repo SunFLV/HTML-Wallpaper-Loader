@@ -29,8 +29,8 @@
     background: linear-gradient(160deg, rgba(22,20,44,.62), rgba(12,11,26,.52));
     border: 1px solid rgba(255,255,255,.14);
     box-shadow: 0 24px 70px rgba(0,0,0,.42), inset 0 1px 0 rgba(255,255,255,.10);
-    backdrop-filter: blur(18px) saturate(140%);
-    -webkit-backdrop-filter: blur(18px) saturate(140%);
+    backdrop-filter: blur(var(--glass-blur, 18px)) saturate(140%);
+    -webkit-backdrop-filter: blur(var(--glass-blur, 18px)) saturate(140%);
   }
   #dock.s-xs { width: 22vw; height: 30vh; padding: 12px 14px; border-radius: 16px; }
   #dock.s-sm { width: 30vw; height: 44vh; padding: 15px 17px; }
@@ -462,6 +462,10 @@
     if (!d || !d.htmlbg) return;
     var m = d.htmlbg;
     if (m.type === "config") {
+      // 毛玻璃强度由宿主页面统一下发（iframe 里的 CSS 变量不会从父页面继承）
+      if (m.glassBlur != null) {
+        document.documentElement.style.setProperty("--glass-blur", m.glassBlur + "px");
+      }
       applyPreset(m.preset);
       setTimeout(syncFile, 80);
     } else if (m.type === "file" && m.file) {

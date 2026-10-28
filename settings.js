@@ -7,7 +7,7 @@
     return {
       version: 1,
       source: { type: "builtin", url: "", file: "", html: "" },
-      display: { scale: 1, opacity: 1, background: "#0a0a12" },
+      display: { scale: 1, opacity: 1, background: "#0a0a12", useWallpaper: false, glassBlur: 18 },
       behavior: { reloadMinutes: 0, hideCursor: false, clickThrough: false },
       ui: { theme: "dark", accent: "#7c5cff" },
       widget: { showClock: true },
@@ -508,6 +508,15 @@
     $("bg").addEventListener("input", function () {
       state.display.background = this.value; save();
     });
+    $("useWallpaper").addEventListener("change", function () {
+      state.display.useWallpaper = this.checked; save();
+      window.__htmlbgSay(this.checked ? "已开启：正在读取系统壁纸图片…" : "已关闭系统壁纸背景");
+    });
+    $("glassBlur").addEventListener("input", function () {
+      state.display.glassBlur = parseInt(this.value, 10) || 0;
+      $("glassBlurVal").textContent = state.display.glassBlur + "px";
+      save();
+    });
     $("reload").addEventListener("input", function () {
       state.behavior.reloadMinutes = Math.max(0, parseInt(this.value, 10) || 0); save();
     });
@@ -531,6 +540,9 @@
     $("opacity").value = state.display.opacity;
     $("opacityVal").textContent = Math.round(state.display.opacity * 100) + "%";
     $("bg").value = state.display.background;
+    $("useWallpaper").checked = !!state.display.useWallpaper;
+    $("glassBlur").value = (state.display.glassBlur != null ? state.display.glassBlur : 18);
+    $("glassBlurVal").textContent = (state.display.glassBlur != null ? state.display.glassBlur : 18) + "px";
     $("reload").value = state.behavior.reloadMinutes;
     $("hideCursor").checked = state.behavior.hideCursor;
     $("clickThrough").checked = state.behavior.clickThrough;

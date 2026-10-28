@@ -108,6 +108,10 @@ public static extern System.IntPtr CreateRoundRectRgn(int x1, int y1, int x2, in
 public static extern int SetWindowRgn(System.IntPtr hWnd, System.IntPtr hRgn, bool bRedraw);
 [System.Runtime.InteropServices.DllImport("gdi32.dll")]
 public static extern bool DeleteObject(System.IntPtr hObject);
+[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError=true, CharSet=System.Runtime.InteropServices.CharSet.Unicode)]
+public static extern bool SystemParametersInfo(uint uiAction, uint uiParam, System.Text.StringBuilder pvParam, uint fWinIni);
+[System.Runtime.InteropServices.DllImport("user32.dll")]
+public static extern bool GetCursorPos(out POINT lpPoint);
 [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
 public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
 [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
@@ -408,6 +412,70 @@ function Find-IconList {
   param([IntPtr]$DefView)
   if ($DefView -eq [IntPtr]::Zero) { return [IntPtr]::Zero }
   return [Win32.Native]::FindWindowEx($DefView, [IntPtr]::Zero, 'SysListView32', [NullString]::Value)
+}
+
+# ---------------------------------------------------------------- system wallpaper
+# "Frosted glass over the real wallpaper" needs the wallpaper PIXELS, not just the
+# area outside our window: backdrop-filter can only blur what is painted behind the
+# panel inside our own page.  So we ask Windows where the current wallpaper lives,
+# downscale it to screen size and hand the JPEG to the page, which paints it as the
+# stage background.  The panel then blurs exactly the picture the user already has.
+$SPI_GETDESKWALLPAPER = 0x0073
+
+function Get-SystemWallpaperPath {
+  try {
+    $sb = New-Object System.Text.StringBuilder 1024
+    if ([Win32.Native]::SystemParametersInfo($SPI_GETDESKWALLPAPER, 1024, $sb, 0)) {
+      $p = $sb.ToString()
+      if ($p -and (Test-Path -LiteralPath $p)) { return $p }
+      if ($p) { Write-Host "system wallpaper path does not exist: $p" }
+    }
+  } catch { Write-Host "SystemParametersInfo failed: $($_.Exception.Message)" }
+  return ''
+}
+
+# Re-encode the wallpaper as a screen-sized JPEG.  A 4K photo would be ~8 MB and
+# base64 in ExecuteScriptAsync would crawl, while a blur backdrop does not need more
+# than screen resolution anyway.
+function Get-WallpaperJpegBytes {
+  param([string]$Path, [int]$MaxWidth = 1920, [int]$Quality = 80)
+  $src = $null; $bmp = $null; $g = $null; $ms = $null
+  try {
+    $src = [System.Drawing.Image]::FromFile($Path)
+    $w = $src.Width; $h = $src.Height
+    if ($w -le 0 -or $h -le 0) { return $null }
+    $nw = $w; $nh = $h
+    if ($w -gt $MaxWidth) { $nw = $MaxWidth; $nh = [int][Math]::Round($h * ($MaxWidth / [double]$w)) }
+    if ($nh -lt 1) { $nh = 1 }
+    $bmp = New-Object System.Drawing.Bitmap($nw, $nh)
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+    $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+    $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+    $g.DrawImage($src, (New-Object System.Drawing.Rectangle(0, 0, $nw, $nh)))
+    $g.Dispose(); $g = $null
+    $codec = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() |
+             Where-Object { $_.MimeType -eq 'image/jpeg' } | Select-Object -First 1
+    $ep = New-Object System.Drawing.Imaging.EncoderParameters(1)
+    $ep.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter([System.Drawing.Imaging.Encoder]::Quality, [long]$Quality)
+    $ms = New-Object System.IO.MemoryStream
+    if ($codec) { $bmp.Save($ms, $codec, $ep) } else { $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Jpeg) }
+    return $ms.ToArray()
+  } catch {
+    Write-Host "wallpaper encode failed: $($_.Exception.Message)"
+    return $null
+  } finally {
+    if ($g) { $g.Dispose() }
+    if ($bmp) { $bmp.Dispose() }
+    if ($src) { $src.Dispose() }
+    if ($ms) { $ms.Dispose() }
+  }
+}
+
+function Get-CursorScreenPos {
+  $pt = New-Object 'Win32.Native+POINT'
+  if ([Win32.Native]::GetCursorPos([ref]$pt)) { return @($pt.X, $pt.Y) }
+  return $null
 }
 
 # The single, proven technique used by Wallpaper Engine, Lively Wallpaper, and the
