@@ -7,7 +7,7 @@
     return {
       version: 1,
       source: { type: "builtin", url: "", file: "", html: "" },
-      display: { scale: 1, opacity: 1, background: "#0a0a12", transparent: false },
+      display: { scale: 1, opacity: 1, background: "#0a0a12" },
       behavior: { reloadMinutes: 0, hideCursor: false, clickThrough: false },
       ui: { theme: "dark", accent: "#7c5cff" },
       widget: { showClock: true },
@@ -19,6 +19,8 @@
         scrollSpeed: 26,
         showCountdown: true,
         countdownOnly: false,
+        // 只渲染面板：壁纸窗口被裁到面板这一块，其余露出系统壁纸（宿主负责改窗口）
+        fitPanel: false,
         panelColor: "",
         label: "距离高考",
         pos: "right-center",
@@ -49,6 +51,17 @@
     return c;
   }
 
+  // 旧配置里「只渲染面板」叫 display.transparent（"透明背景"），现在归到预设项
+  // preset.fitPanel（窗口裁到面板那一块）。遇到旧字段就地迁移，免得用户已经勾过的
+  // 选项在升级后悄悄失效。
+  function normalize(s) {
+    if (s && s.display && s.display.transparent) {
+      s.preset = s.preset || {};
+      if (!s.preset.fitPanel) s.preset.fitPanel = true;
+    }
+    return s;
+  }
+
   var ipc = null;
   try { ipc = require("electron").ipcRenderer; } catch (e) {}
 
@@ -68,6 +81,7 @@
   // 的通道），宿主 -> 页面用 ExecuteScriptAsync。
   var HOST_BASE_TITLE = document.title;
   var hostPending = null;
+  var hostWaiting = false;   // 页面刚发出一条需要宿主应答的消息（pickhtml 用）
   window.__htmlbgHasHost = false;
 
   function hostSend(kind, payload) { hostPending = { kind: kind, payload: payload || "" }; }
@@ -92,6 +106,7 @@
   // 宿主处理完一条消息后调用，恢复标题以便下一条能被识别为变化
   window.__htmlbgAck = function () {
     hostPending = null;
+    hostWaiting = false;
     try { document.title = HOST_BASE_TITLE; } catch (e) {}
     return "ok";
   };
@@ -106,7 +121,7 @@
   window.__htmlbgFileReceived = function (encJson) {
     try {
       var data = JSON.parse(decodeURIComponent(encJson));
-      state = merge(defaultConfig(), data);
+      state = normalize(merge(defaultConfig(), data));
       syncControls();
       localStorage.setItem(STORAGE_KEY, JSON.stringify(serialize(state)));
       reportToHost();
@@ -122,7 +137,7 @@
   window.__htmlbgPresetChanged = function (encJson) {
     try {
       var data = JSON.parse(decodeURIComponent(encJson));
-      state = merge(defaultConfig(), data);
+      state = normalize(merge(defaultConfig(), data));
       syncControls();
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(serialize(state))); } catch (e) {}
       window.__htmlbgSay("已同步壁纸上的预设改动");
@@ -333,11 +348,11 @@
     }
     try {
       var raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) return merge(defaultConfig(), JSON.parse(raw));
+      if (raw) return normalize(merge(defaultConfig(), JSON.parse(raw)));
     } catch (e) {}
     // 首次启动：采用 wallpaper.ps1 从 config.json 注入的配置
     if (window.WALLPAPER_CONFIG && typeof window.WALLPAPER_CONFIG === "object") {
-      return merge(defaultConfig(), window.WALLPAPER_CONFIG);
+      return normalize(merge(defaultConfig(), window.WALLPAPER_CONFIG));
     }
     return defaultConfig();
   }
@@ -363,38 +378,62 @@
   function onFilePicked(e) {
     var f = e.target.files && e.target.files[0];
     if (!f) return;
+    // 内联 HTML 要经 document.title 传给宿主，太大的文件会撑爆这条通道
+    if (f.size > 400000) {
+      window.__htmlbgSay("这个文件太大（" + Math.round(f.size / 1024) +
+        " KB），页面选择器放不下；请点宿主对话框或直接在路径框里填绝对路径");
+      return;
+    }
     var reader = new FileReader();
     reader.onload = function () {
-      state.source = { type: "file", url: "", file: f.name, html: "", _blobUrl: null };
-      // 本地选中的文件通过 Blob 临时加载，无法持久化到文件配置
-      state.source._blobUrl = URL.createObjectURL(new Blob([reader.result], { type: "text/html" }));
+      // 页面自带的文件选择器拿不到真实路径（浏览器安全限制），所以直接把文件内容当
+      // 内联 HTML 载入 —— 至少立刻能看到效果。要走"记住路径、每次启动都加载"那条路，
+      // 得用宿主的原生对话框（选中后写进 config.json 的 source.file）。
+      state.source = { type: "code", url: "", file: f.name, html: reader.result, _blobUrl: null };
       save();
+      window.__htmlbgSay("已载入：" + f.name + "（页面选择器无法保存路径，下次启动请用宿主对话框）");
     };
     reader.readAsText(f);
   }
 
   // 「选择本地 HTML 文件」：与文件导入同款。真实运行时由宿主打开原生对话框，把绝对
-  // 路径回填到下面的路径框；浏览器预览里仍用页面自己的 <input type=file>。
+  // 路径回填到路径框并直接加载；浏览器预览里仍用页面自己的 <input type=file>。
+  // 页面上始终留一个隐藏的文件选择器作兜底：若点「选择文件」后 1.5 秒内宿主没有任何
+  // 应答（消息没送达 / 宿主没这个能力），就直接改用页面自带的选择器，按钮不会"点了没反应"。
   function renderHtmlPick() {
     var box = $("htmlPickWrap");
     if (!box) return;
     box.innerHTML = "";
+
+    var fallback = document.createElement("input");
+    fallback.id = "fileInput";
+    fallback.type = "file";
+    fallback.accept = ".html,.htm";
+    fallback.addEventListener("change", onFilePicked);
+    fallback.style.display = "none";
+    box.appendChild(fallback);
+
     if (window.__htmlbgHasHost) {
       var choose = document.createElement("button");
       choose.className = "btn slot-choose";
       choose.textContent = "选择文件";
       choose.addEventListener("click", function () {
+        hostWaiting = true;          // 宿主的 __htmlbgAck 会把它清掉
         hostSend("pickhtml", "");
-        window.__htmlbgSay("在弹出的对话框里选择 HTML 文件…");
+        window.__htmlbgSay("正在打开文件对话框…");
+        setTimeout(function () {
+          if (!hostWaiting) return;  // 宿主已经应答了，正常流程
+          hostWaiting = false;
+          hostPending = null;
+          // 不能在这里 fallback.click()：Chromium 要求文件选择器必须由真实用户手势
+          // 触发，定时器里派发的点击会被拦掉。把选择器显示出来让用户自己点。
+          fallback.style.display = "";
+          window.__htmlbgSay("宿主没有应答，请改用下面的页面选择器");
+        }, 1500);
       });
       box.appendChild(choose);
     } else {
-      var finput = document.createElement("input");
-      finput.id = "fileInput";
-      finput.type = "file";
-      finput.accept = ".html,.htm";
-      finput.addEventListener("change", onFilePicked);
-      box.appendChild(finput);
+      fallback.style.display = "";
     }
   }
 
@@ -434,9 +473,6 @@
     $("bg").addEventListener("input", function () {
       state.display.background = this.value; save();
     });
-    $("transparent").addEventListener("change", function () {
-      state.display.transparent = this.checked; save();
-    });
     $("reload").addEventListener("input", function () {
       state.behavior.reloadMinutes = Math.max(0, parseInt(this.value, 10) || 0); save();
     });
@@ -460,7 +496,6 @@
     $("opacity").value = state.display.opacity;
     $("opacityVal").textContent = Math.round(state.display.opacity * 100) + "%";
     $("bg").value = state.display.background;
-    $("transparent").checked = !!state.display.transparent;
     $("reload").value = state.behavior.reloadMinutes;
     $("hideCursor").checked = state.behavior.hideCursor;
     $("clickThrough").checked = state.behavior.clickThrough;
@@ -496,7 +531,7 @@
     reader.onload = function () {
       try {
         var data = JSON.parse(reader.result);
-        state = merge(defaultConfig(), data);
+        state = normalize(merge(defaultConfig(), data));
         syncControls();
         save();
       } catch (e) {
@@ -579,6 +614,10 @@
     $("cdShow").addEventListener("change", function () {
       state.preset.showCountdown = this.checked; save();
     });
+    $("fitPanel").addEventListener("change", function () {
+      // 宿主收到后会把壁纸窗口裁到面板那一块（或恢复全屏）
+      state.preset.fitPanel = this.checked; save();
+    });
     $("cdOnly").addEventListener("change", function () {
       state.preset.countdownOnly = this.checked;
       // 「只显示倒计时」和「显示倒计时」互斥时以 countdownOnly 为准，顺手勾上显示
@@ -634,6 +673,7 @@
     // 「只显示倒计时面板」和「面板背景色」只属于高考倒计时预设
     var examOnly = $("examOnlyOpts");
     if (examOnly) examOnly.classList.toggle("off", p.id !== "exam-dock");
+    $("fitPanel").checked = !!p.fitPanel;
     $("cdOnly").checked = !!p.countdownOnly;
     $("panelColor").value = p.panelColor || "";
     document.querySelectorAll("#posGrid .magnet").forEach(function (b) {
@@ -687,7 +727,7 @@
 
   if (ipc) {
     ipc.on("config", function (e, cfg) {
-      state = merge(defaultConfig(), cfg);
+      state = normalize(merge(defaultConfig(), cfg));
       syncControls();
     });
     ipc.on("saved", function () { /* 已保存 */ });

@@ -102,6 +102,12 @@ public static extern bool SetLayeredWindowAttributes(System.IntPtr hwnd, uint cr
 public static extern System.IntPtr CreateWindowEx(uint dwExStyle, string lpClassName, string lpWindowName, uint dwStyle, int x, int y, int nWidth, int nHeight, System.IntPtr hWndParent, System.IntPtr hMenu, System.IntPtr hInstance, System.IntPtr lpParam);
 [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError=true)]
 public static extern bool DestroyWindow(System.IntPtr hWnd);
+[System.Runtime.InteropServices.DllImport("gdi32.dll")]
+public static extern System.IntPtr CreateRoundRectRgn(int x1, int y1, int x2, int y2, int w, int h);
+[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError=true)]
+public static extern int SetWindowRgn(System.IntPtr hWnd, System.IntPtr hRgn, bool bRedraw);
+[System.Runtime.InteropServices.DllImport("gdi32.dll")]
+public static extern bool DeleteObject(System.IntPtr hObject);
 [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
 public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
 [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
@@ -533,37 +539,88 @@ function Enable-LayeredIfRaisedDesktop {
   }
 }
 
-# "Transparent wallpaper" mode: punch out the page's background so the SYSTEM
-# wallpaper shows through underneath (this window sits above the wallpaper painter
-# and below the icons, so its transparent pixels reveal the real wallpaper).
+# "Panel only" mode (preset.fitPanel, formerly display.transparent).
 #
-# Implementation: WS_EX_LAYERED + LWA_COLORKEY on pure black.  In transparent mode
-# wallpaper.js paints the page background as exactly #000000, so those pixels are
-# keyed out and everything else (text, panels) composites normally.
+# Why the obvious approach cannot work: making our window "transparent"
+# (WS_EX_LAYERED + LWA_COLORKEY on black) just shows BLACK, never the wallpaper.
+# Two independent reasons, either of which is fatal:
+#   1) the desktop's wallpaper painter (DefView / the wallpaper WorkerW) never paints
+#      BEHIND us - it is told to skip its children (that is exactly why we have to
+#      add WS_CLIPCHILDREN to be visible at all), so the pixels behind a transparent
+#      wallpaper window are simply never painted = black;
+#   2) WebView2 submits its pixels to DWM as its own composition layer, so a colour
+#      key is applied to a surface that sits behind the browser content anyway.
 #
-# Caveat worth knowing: colour-key compositing has no per-pixel alpha, so a
-# semi-transparent panel (rgba) blends against the black page background, i.e. it
-# looks like a dark translucent panel over the wallpaper rather than a true blend.
-# Use an OPAQUE panel colour, or 'transparent', to let the wallpaper show fully.
+# What does work, and is what the user actually wants ("only render the panel, let
+# the real wallpaper show through"): make the wallpaper window SMALL - exactly the
+# rect the panel occupies - and clip it with a rounded window region.  Everything
+# outside that rect is not painted by us at all, so the desktop keeps its own
+# wallpaper, icons and everything else.  No compositing, no per-pixel alpha.
+#
+# The rect is derived from the same size/pos the preset page uses, so the panel keeps
+# its position and proportions; the page switches its #dock to "fill the window" so
+# it still looks identical.
 $script:NeedLayered = $false
-function Set-WallpaperTransparency {
-  param([IntPtr]$Hwnd, [bool]$On)
+
+# size id -> fraction of the screen (mirrors #dock.s-* in presets/exam-dock.html)
+$script:PanelSizeFrac = @{
+  'xs' = @(0.22, 0.30); 'sm' = @(0.30, 0.44); 'md' = @(0.38, 0.62)
+  'lg' = @(0.48, 0.76); 'xl' = @(0.62, 0.88)
+}
+
+function Get-PanelRect {
+  param([int[]]$Screen, [string]$Size = 'md', [string]$Pos = 'right-center', [switch]$CountdownOnly)
+  # $Screen = @(x, y, w, h) of the virtual screen (physical pixels)
+  $W = $Screen[2]; $H = $Screen[3]
+  $frac = $script:PanelSizeFrac[[string]$Size]
+  if (-not $frac) { $frac = $script:PanelSizeFrac['md'] }
+  $fw = [double]$frac[0]; $fh = [double]$frac[1]
+  if ($CountdownOnly) {
+    # a countdown-only panel does not need a tall box
+    if ($fw -gt 0.34) { $fw = 0.34 }
+    if ($fh -gt 0.30) { $fh = 0.30 }
+  }
+  $pw = [int][Math]::Round($fw * $W)
+  $ph = [int][Math]::Round($fh * $H)
+  $mx = [int][Math]::Round(0.03 * $W)      # same 3vw / 4vh / 5vh margins as the CSS
+  $my = [int][Math]::Round(0.04 * $H)
+  $mb = [int][Math]::Round(0.05 * $H)
+  $xc = [int][Math]::Round(($W - $pw) / 2)   # horizontal centre
+  $yc = [int][Math]::Round(($H - $ph) / 2)   # vertical centre
+  switch ($Pos) {
+    'left-top'      { $x = $mx;          $y = $my }
+    'center-top'    { $x = $xc;          $y = $my }
+    'right-top'     { $x = $W - $mx - $pw; $y = $my }
+    'left-center'   { $x = $mx;          $y = $yc }
+    'center'        { $x = $xc;          $y = $yc }
+    'right-center'  { $x = $W - $mx - $pw; $y = $yc }
+    'left-bottom'   { $x = $mx;          $y = $H - $mb - $ph }
+    'center-bottom' { $x = $xc;          $y = $H - $mb - $ph }
+    'right-bottom'  { $x = $W - $mx - $pw; $y = $H - $mb - $ph }
+    default         { $x = $W - $mx - $pw; $y = $yc }
+  }
+  if ($x -lt 0) { $x = 0 }
+  if ($y -lt 0) { $y = 0 }
+  return @($x, $y, $pw, $ph)
+}
+
+# Clip the wallpaper window to a rounded rect so its square corners never show a
+# strip of page background.  Pass $null (or 0 size) to drop the region again.
+function Set-WallpaperRegion {
+  param([IntPtr]$Hwnd, [int]$W, [int]$H, [int]$Radius = 18)
   if ($Hwnd -eq [IntPtr]::Zero -or -not [Win32.Native]::IsWindow($Hwnd)) { return $false }
-  $ex = [Win32.Native]::GetWindowLong($Hwnd, $GWL_EXSTYLE)
-  if ($On) {
-    if (($ex -band $WS_EX_LAYERED) -eq 0) {
-      [void][Win32.Native]::SetWindowLong($Hwnd, $GWL_EXSTYLE, [int]($ex -bor $WS_EX_LAYERED))
-    }
-    return [Win32.Native]::SetLayeredWindowAttributes($Hwnd, 0, 255, ($LWA_COLORKEY -bor $LWA_ALPHA))
+  if ($W -le 0 -or $H -le 0) {
+    [void][Win32.Native]::SetWindowRgn($Hwnd, [IntPtr]::Zero, $true)
+    return $true
   }
-  if ($script:NeedLayered) {
-    # raised desktop still needs the layered bit - drop only the colour key
-    return [Win32.Native]::SetLayeredWindowAttributes($Hwnd, 0, 255, $LWA_ALPHA)
-  }
-  if (($ex -band $WS_EX_LAYERED) -ne 0) {
-    [void][Win32.Native]::SetWindowLong($Hwnd, $GWL_EXSTYLE, [int]($ex -band (-bnot $WS_EX_LAYERED)))
-  }
-  return $true
+  if ($Radius -gt [int]($W / 2)) { $Radius = [int]($W / 2) }
+  if ($Radius -gt [int]($H / 2)) { $Radius = [int]($H / 2) }
+  $r = [Win32.Native]::CreateRoundRectRgn(0, 0, $W + 1, $H + 1, $Radius, $Radius)
+  if ($r -eq [IntPtr]::Zero) { return $false }
+  $ok = [Win32.Native]::SetWindowRgn($Hwnd, $r, $true)
+  # NOTE: after a successful SetWindowRgn the system owns the region - do not
+  # DeleteObject it (that is only for when the call fails / replaces nothing).
+  return $ok
 }
 
 function Find-IconWorker {
@@ -822,7 +879,12 @@ function Get-ClientOrigin {
 }
 
 function Enter-DesktopMode {
-  param([IntPtr]$Hwnd, [string]$Mode, $Targets)
+  # -Rect: optional @(x, y, w, h) that replaces the default "cover everything" rect.
+  #        x/y are relative to the area the mode fills (parent client origin for the
+  #        reparented modes, virtual-screen origin for zorder/bottom).  Used by the
+  #        "only render the panel" mode, where the wallpaper window is clipped down to
+  #        the panel so the rest of the desktop keeps its own wallpaper.
+  param([IntPtr]$Hwnd, [string]$Mode, $Targets, [int[]]$Rect = @())
 
   if ($Hwnd -eq [IntPtr]::Zero) { return $false }
   if (-not [Win32.Native]::IsWindow($Hwnd)) { return $false }
@@ -940,6 +1002,7 @@ function Enter-DesktopMode {
   #    whole virtual screen for the top-level modes.
   $targetSX = 0; $targetSY = 0
   $curX = 0; $curY = 0
+  $baseX = 0; $baseY = 0
   if ($Parent -ne [IntPtr]::Zero) {
     $sz = Get-TargetSize $Parent               # parent-CLIENT coords (child windows are clipped to it)
     $cx = $sz[0]; $cy = $sz[1]
@@ -951,6 +1014,15 @@ function Enter-DesktopMode {
     $cx = $vs[2]; $cy = $vs[3]
     $targetSX = $vs[0]; $targetSY = $vs[1]     # virtual-screen origin (screen coordinates)
     $curX = $vs[0]; $curY = $vs[1]
+    $baseX = $vs[0]; $baseY = $vs[1]
+  }
+  # "panel only" mode: shrink/clip the window to a sub-rect instead of covering
+  # everything.  Positions are relative to whatever the mode fills, which is exactly
+  # what $baseX/$baseY holds (0 for reparented modes = parent client origin).
+  if ($Rect -and $Rect.Count -ge 4 -and $Rect[2] -gt 0 -and $Rect[3] -gt 0) {
+    $cx = $Rect[2]; $cy = $Rect[3]
+    $targetSX += $Rect[0]; $targetSY += $Rect[1]
+    $curX = $baseX + $Rect[0]; $curY = $baseY + $Rect[1]
   }
   [void][Win32.Native]::SetWindowPos($Hwnd, $insertAfter, $curX, $curY, $cx, $cy,
     ($SWP_NOACTIVATE -bor $SWP_SHOWWINDOW -bor $SWP_FRAMECHANGED))

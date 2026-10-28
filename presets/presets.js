@@ -24,6 +24,7 @@
         scrollSpeed: 26,
         showCountdown: true,
         countdownOnly: false,
+        fitPanel: false,
         panelColor: "",
         label: "距离高考",
         pos: "right-center",

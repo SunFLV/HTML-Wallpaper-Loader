@@ -161,10 +161,10 @@ $script:WallpaperRec = New-BrowserWindow -Url $wallpaperUrl `
                                          -Borderless $true
 
 function Attach-Wallpaper {
-  param([string]$Mode)
+  param([string]$Mode, [int[]]$Rect = @())
   $h = Get-BrowserWindowHandle $script:WallpaperRec
   if ($h -eq [IntPtr]::Zero) { return $false }
-  return (Enter-DesktopMode $h $Mode $script:Targets)
+  return (Enter-DesktopMode $h $Mode $script:Targets $Rect)
 }
 
 # Attach BEFORE the window is first shown.  The window is still hidden here, so the
@@ -173,6 +173,8 @@ function Attach-Wallpaper {
 foreach ($mode in $script:ModeOrder) {
   if (Attach-Wallpaper $mode) {
     $script:ModeIndex = [Array]::IndexOf($script:ModeOrder, $mode)
+    # "panel only" is saved in config.json: clip the window to the panel right away
+    if ($script:PanelFit) { Apply-PanelFit $true }
     break
   }
 }
@@ -197,11 +199,18 @@ $cfgPath = Join-Path $ScriptDir 'config.json'
 if (Test-Path -LiteralPath $cfgPath) {
   try { $script:Config = (Get-Content -LiteralPath $cfgPath -Raw) } catch { $script:Config = $null }
 }
-# Remember the saved transparency mode.  The wallpaper window is not attached yet
-# at this point, so we only set the flag; the first watchdog ticks (which re-fit on
-# WatchTicks <= 10) and the "page rendered" branch below call Apply-Transparency.
+# Remember the saved "panel only" mode.  The wallpaper window is not attached yet at
+# this point, so we only set the flag; the first watchdog ticks (which re-fit on
+# WatchTicks <= 10) and the config handler call Apply-PanelFit.
+# display.transparent is the older name of the same idea and is still accepted.
 try {
-  if ($script:Config) { $script:Transparent = [bool](($script:Config | ConvertFrom-Json).display.transparent) }
+  if ($script:Config) {
+    $c0 = $script:Config | ConvertFrom-Json
+    $fit = $false
+    if ($c0.preset -and $c0.preset.fitPanel) { $fit = $true }
+    if ($c0.display -and $c0.display.transparent) { $fit = $true }
+    $script:PanelFit = [bool]$fit
+  }
 } catch {}
 $script:CfgDirtyAt = $null
 $script:PageSlots = $null
@@ -220,18 +229,79 @@ function Mark-HostToSettings {
   Push-ScriptTo $script:SettingsRec "try{window.__htmlbgHasHost=true;window.__htmlbgHostReady&&window.__htmlbgHostReady();}catch(e){}"
 }
 
-# --------------------------------------------------------- transparency mode
-# display.transparent = true  ->  punch the page background out of the wallpaper
-# window (WS_EX_LAYERED + LWA_COLORKEY on black) so the SYSTEM wallpaper shows
-# through underneath.  wallpaper.js paints the stage as pure black in that mode;
-# every black pixel becomes see-through.
-$script:Transparent = $false
-function Apply-Transparency {
-  param([bool]$On = $script:Transparent)
-  $script:Transparent = [bool]$On
-  $h = Get-BrowserWindowHandle $script:WallpaperRec
-  if ($h -eq [IntPtr]::Zero) { return }
-  try { [void](Set-WallpaperTransparency $h $script:Transparent) } catch { Write-Host "transparency failed: $($_.Exception.Message)" }
+# --------------------------------------------------------- "panel only" mode
+# preset.fitPanel = true  ->  the wallpaper window is shrunk to the panel's rect and
+# clipped with a rounded region, so the desktop outside it keeps its OWN wallpaper.
+#
+# The previous attempt (WS_EX_LAYERED + LWA_COLORKEY on black) cannot work: WebView2
+# submits its pixels through DWM as a separate composition layer, so the colour key
+# never reaches the browser content - the user just saw a black page.  Clipping the
+# window to the panel needs no compositing at all and always shows the real
+# wallpaper outside the panel.
+# (already seeded from config.json above - do not clobber it)
+if ($null -eq $script:PanelFit) { $script:PanelFit = $false }
+# remembers which rect we last applied, so moving/resizing the panel re-fits the
+# window even though the panel-mode flag itself did not change
+$script:PanelFitKey = ''
+function Get-PanelFitKey {
+  $vs = Get-VirtualScreen
+  $size = 'md'; $pos = 'right-center'; $only = $false
+  try {
+    $cfg = $script:Config | ConvertFrom-Json
+    if ($cfg.preset) {
+      if ($cfg.preset.size) { $size = [string]$cfg.preset.size }
+      if ($cfg.preset.pos) { $pos = [string]$cfg.preset.pos }
+      $only = [bool]$cfg.preset.countdownOnly
+    }
+  } catch {}
+  return "$size|$pos|$only|$($vs[2])x$($vs[3])"
+}
+function Get-PanelFitRect {
+  # rect in parent-client / virtual-screen-relative coordinates (see Enter-DesktopMode)
+  $vs = Get-VirtualScreen
+  $size = 'md'; $pos = 'right-center'; $only = $false
+  try {
+    $cfg = $script:Config | ConvertFrom-Json
+    if ($cfg.preset) {
+      # only meaningful for a preset page with a panel - the built-in full-screen
+      # animation must keep covering the whole desktop
+      if (-not $cfg.preset.id) { return @() }
+      if ($cfg.preset.size) { $size = [string]$cfg.preset.size }
+      if ($cfg.preset.pos) { $pos = [string]$cfg.preset.pos }
+      $only = [bool]$cfg.preset.countdownOnly
+    } else { return @() }
+  } catch {}
+  return (Get-PanelRect -Screen $vs -Size $size -Pos $pos -CountdownOnly:$only)
+}
+
+function Apply-PanelFit {
+  param([bool]$On = $script:PanelFit)
+  $script:PanelFit = [bool]$On
+  if ($script:AttachMode -eq 'none') { return }
+  $rect = @()
+  if ($script:PanelFit) { $rect = Get-PanelFitRect }
+  try {
+    if (Attach-Wallpaper $script:AttachMode $rect) {
+      $h = Get-BrowserWindowHandle $script:WallpaperRec
+      if ($h -ne [IntPtr]::Zero) {
+        if ($script:PanelFit -and $rect.Count -ge 4) {
+          # clip with the window's REAL size (it can be a few px larger than the
+          # requested client size if the browser keeps a non-client inset)
+          $wr = New-Object 'Win32.Native+RECT'
+          $w = $rect[2]; $hh = $rect[3]
+          if ([Win32.Native]::GetWindowRect($h, [ref]$wr)) {
+            $w = $wr.Right - $wr.Left; $hh = $wr.Bottom - $wr.Top
+          }
+          [void](Set-WallpaperRegion $h $w $hh 20)
+        } else {
+          [void](Set-WallpaperRegion $h 0 0)
+        }
+      }
+    }
+  } catch { Write-Host "panel fit failed: $($_.Exception.Message)" }
+  if ($script:PanelFit -and $rect.Count -ge 4) {
+    Write-Host ("panel fit: window clipped to {0}x{1} at {2},{3} - the rest shows your own wallpaper" -f $rect[2], $rect[3], $rect[0], $rect[1])
+  }
 }
 
 function Invoke-HostMessage {
@@ -257,10 +327,25 @@ function Invoke-HostMessage {
       $script:CfgCount++
       if ($script:CfgCount -le 5) { Write-Host "config forwarded to wallpaper (#$($script:CfgCount), $($json.Length) bytes)" }
       Push-ScriptTo $script:WallpaperRec "try{window.__htmlbgApplyCfg && window.__htmlbgApplyCfg(decodeURIComponent('$([System.Uri]::EscapeDataString($json))'));}catch(e){}"
-      # display.transparent -> see through the wallpaper window to the system wallpaper
+      # preset.fitPanel -> clip the wallpaper window down to the panel so the desktop
+      # outside it keeps the system wallpaper (display.transparent = old name)
       try {
-        $want = [bool](($json | ConvertFrom-Json).display.transparent)
-        if ($want -ne $script:Transparent) { Apply-Transparency $want; Write-Host "transparency -> $want" }
+        $c = $json | ConvertFrom-Json
+        $want = $false
+        if ($c.preset -and $c.preset.fitPanel) { $want = $true }
+        if ($c.display -and $c.display.transparent) { $want = $true }
+        if ($want) {
+          $key = Get-PanelFitKey
+          if (-not $script:PanelFit -or $key -ne $script:PanelFitKey) {
+            $script:PanelFitKey = $key
+            Apply-PanelFit $true
+            Write-Host "panel fit -> on ($key)"
+          }
+        } elseif ($script:PanelFit) {
+          $script:PanelFitKey = ''
+          Apply-PanelFit $false
+          Write-Host "panel fit -> off"
+        }
       } catch {}
       # 'cfg' is the message that is guaranteed to arrive on every settings-window
       # open (the page reports its config right after load), so it doubles as the
@@ -354,17 +439,26 @@ function Invoke-HostMessage {
       Push-ScriptTo $Rec $ack
     }
     'pickhtml' {
-      # 「选择本地 HTML 文件」用的原生对话框：与文件导入同款，由宿主打开、把绝对路径
-      # 回填到设置里的路径框（浏览器预览里仍用页面自己的 <input type=file>）。
+      # 「选择本地 HTML 文件」用的原生对话框：与文件导入同款，由宿主打开。
+      # 选完立刻填进路径框并替用户点一下「加载文件」，否则用户看不到任何变化
+      # （之前只是回填输入框，状态栏那行提示很容易被忽略，看起来就像"没反应"）。
+      Write-Host 'pickhtml: opening the native file dialog'
+      # Acknowledge FIRST: the settings page is waiting for this to know the host
+      # really took the message (otherwise it falls back to its own file picker).
+      Push-ScriptTo $Rec "try{window.__htmlbgAck&&window.__htmlbgAck();window.__htmlbgSay&&window.__htmlbgSay('正在打开文件对话框…');}catch(e){}"
       try {
         $path = Open-DocumentDialog -Title '选择 HTML 文件' `
                                     -Filter 'HTML 文件 (*.html;*.htm)|*.html;*.htm|所有文件 (*.*)|*.*'
       } catch { $path = '' }
       if ($path) {
-        Push-ScriptTo $Rec "try{var f=document.getElementById('filePath'); if(f){f.value=decodeURIComponent('$([Uri]::EscapeDataString($path))');} window.__htmlbgSay&&window.__htmlbgSay('已选择：'+decodeURIComponent('$([Uri]::EscapeDataString((Split-Path -Leaf $path)))')+'，点「加载文件」应用');}catch(e){}"
+        $pEsc = [Uri]::EscapeDataString($path)
+        $nEsc = [Uri]::EscapeDataString((Split-Path -Leaf $path))
+        Push-ScriptTo $Rec "try{var f=document.getElementById('filePath'); if(f){f.value=decodeURIComponent('$pEsc');} var b=document.getElementById('loadFile'); if(b){b.click();} window.__htmlbgSay&&window.__htmlbgSay('已加载：'+decodeURIComponent('$nEsc'));}catch(e){}"
         Write-Host ("html source picked: " + $path)
+      } else {
+        Push-ScriptTo $Rec "try{window.__htmlbgSay&&window.__htmlbgSay('没有选择文件');}catch(e){}"
+        Write-Host 'pickhtml: dialog closed without a file'
       }
-      Push-ScriptTo $Rec $ack
     }
     'unbindfile' {
       # Detach whatever the slot was bound to.
@@ -456,6 +550,7 @@ function Invoke-NextMode {
     $script:AttachMode = $mode
     $script:WatchTicks = 0
     Write-Host "switched attach mode -> $mode"
+    if ($script:PanelFit) { Apply-PanelFit $true }
     if ($script:Notify) {
       $script:Notify.ShowBalloonTip(2500, 'HTML 壁纸', "挂接模式：$mode", [System.Windows.Forms.ToolTipIcon]::Info)
     }
@@ -510,6 +605,7 @@ function Invoke-Refit {
   $script:Targets = Get-DesktopTargets
   $mode = if ($script:AttachMode -ne 'none') { $script:AttachMode } else { $script:ModeOrder[0] }
   if (Attach-Wallpaper $mode) { $script:AttachMode = $mode }
+  if ($script:AttachMode -ne 'none') { Apply-PanelFit $script:PanelFit }
   Update-ModeMenu
 }
 
@@ -685,9 +781,9 @@ function Tick-All {
 
   if ($refresh) {
     if ($drift) { $script:Targets = Get-DesktopTargets }
-    [void](Attach-Wallpaper $script:AttachMode)
-    # re-attaching re-applies the layered attributes, so keep transparency in sync
-    if ($script:Transparent) { Apply-Transparency $true }
+    # re-attaching resets the position/size, so "panel only" must be re-applied with
+    # it (Attach-Wallpaper alone would cover the whole desktop again)
+    Apply-PanelFit $script:PanelFit
   }
 }
 
@@ -704,7 +800,7 @@ $script:ResizeTimer.add_Tick({
     $script:LastScreen = $now
     Write-Host "screen changed -> $now, re-fitting the wallpaper"
     $script:Targets = Get-DesktopTargets
-    if ($script:AttachMode -ne 'none') { [void](Attach-Wallpaper $script:AttachMode) }
+    if ($script:AttachMode -ne 'none') { Apply-PanelFit $script:PanelFit }
   }
 })
 

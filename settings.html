@@ -79,6 +79,12 @@
           </div>
           <label class="check"><input id="cdShow" type="checkbox" checked /> 显示倒计时面板</label>
           <div id="examOnlyOpts">
+            <label class="check"><input id="fitPanel" type="checkbox" /> 只渲染面板，其余露出系统壁纸</label>
+            <p class="hint">
+              勾上后壁纸窗口会被裁到<b>只有面板这一块</b>，面板之外就是你 Windows 原本的桌面壁纸
+              （不是"抠掉黑色"那种伪透明，是真的不画）。面板的位置 / 大小沿用下面的设置。
+            </p>
+
             <label class="check"><input id="cdOnly" type="checkbox" /> 只显示倒计时面板（隐藏文档区）</label>
 
             <label class="row">面板背景色（支持 RGBA）</label>
@@ -88,8 +94,9 @@
             </div>
             <p class="hint">
               留空沿用默认毛玻璃面板；填 <code>rgba(20,18,40,0.55)</code> 直接指定颜色与透明度；
-              填 <code>transparent</code> 则面板完全透明、只剩文字浮在壁纸上。
-              配合「显示 → 透明背景」勾选可露出系统壁纸。
+              填 <code>transparent</code> 则面板完全透明、只剩文字浮在上面。
+              面板是<b>整块窗口</b>，半透明颜色是跟页面背景色混合（不是跟系统壁纸混合），
+              想贴近系统壁纸观感就用不透明颜色。
             </p>
           </div>
 
@@ -145,12 +152,6 @@
 
       <section class="block">
         <h2>显示</h2>
-        <label class="check"><input id="transparent" type="checkbox" /> 透明背景（露出系统壁纸）</label>
-        <p class="hint">
-          勾选后壁纸窗口的<b>背景色被抠掉</b>，直接显示 Windows 原本的桌面壁纸，页面上只留下文字和面板。
-          注意：抠像按纯黑色做，所以面板请用<b>不透明颜色</b>（如 <code>rgb(20,18,40)</code>）或
-          <code>transparent</code>；半透明 rgba 面板会偏暗。
-        </p>
         <label class="row">缩放 <span id="scaleVal" class="val">100%</span></label>
         <input id="scale" type="range" min="0.1" max="3" step="0.05" value="1" />
         <label class="row">不透明度 <span id="opacityVal" class="val">100%</span></label>

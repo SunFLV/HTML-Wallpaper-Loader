@@ -48,6 +48,14 @@
   #dock.p-center-bottom{ left: 50%; bottom: 5vh; transform: translateX(-50%); }
   #dock.p-right-bottom{ right: 3vw; bottom: 5vh; }
 
+  /* 「只渲染面板」模式：宿主把窗口裁成面板大小，面板直接铺满整块窗口。
+     （放在位置规则之后，并加 !important，压掉 p-* 的定位与 transform） */
+  #dock.fit {
+    left: 0 !important; right: 0 !important; top: 0 !important; bottom: 0 !important;
+    width: auto !important; height: auto !important;
+    transform: none !important; border-radius: 0;
+  }
+
   /* ---------------- countdown ---------------- */
   #count { flex: 0 0 auto; text-align: center; }
   #cdLabel { font-size: clamp(11px, 1.05vw, 15px); letter-spacing: .32em; opacity: .72; }
@@ -194,8 +202,8 @@
 
   var DEFAULTS = {
     id: "exam-dock", examDate: "2027-06-07", docPath: "", fontSize: 22,
-    scrollSpeed: 26, showCountdown: true, countdownOnly: false, panelColor: "",
-    label: "距离高考", pos: "right-center", size: "md", paused: false
+    scrollSpeed: 26, showCountdown: true, countdownOnly: false, fitPanel: false,
+    panelColor: "", label: "距离高考", pos: "right-center", size: "md", paused: false
   };
   var P = Object.assign({}, DEFAULTS);
   var LOCAL_KEY = "htmlbg-preset-exam-dock-v1";
@@ -216,7 +224,8 @@
     $("count").style.display = P.showCountdown ? "" : "none";
     $("cdLabel").textContent = P.label || DEFAULTS.label;
     var dock = $("dock");
-    dock.className = "p-" + (P.pos || "right-center") + " s-" + (P.size || "md");
+    dock.className = "p-" + (P.pos || "right-center") + " s-" + (P.size || "md") +
+      (P.fitPanel ? " fit" : "");
     // 「只显示倒计时面板」：隐藏文档区，面板高度收缩到内容
     var only = !!P.countdownOnly;
     $("reader").style.display = only ? "none" : "";

@@ -69,5 +69,39 @@ $f = Get-FileDialogFilter -Accept '.docx,.pdf'
 Check 'accept list builds a filter' ($f -like '*docx*pdf*') $f
 Check 'default filter covers every format' ((Get-FileDialogFilter -Accept '') -like '*pptx*csv*mp4*')
 
+# --- panel-fit geometry -----------------------------------------------------------
+# Get-PanelRect lives in desktopcore.ps1, which Add-Types the whole Win32 surface
+# (and pulls in WebView2); for a pure geometry check we lift just the size table and
+# the function out of the file text instead of dot-sourcing the module.
+Write-Host '--- Get-PanelRect (panel-only mode geometry) ---'
+$dcPath = Join-Path $dir 'desktopcore.ps1'
+$dc = Get-Content -LiteralPath $dcPath -Raw
+$start = $dc.IndexOf('$script:PanelSizeFrac')
+$fStart = $dc.IndexOf('function Get-PanelRect', $start)
+$fEnd = $dc.IndexOf("`n}", $fStart)
+if ($start -ge 0 -and $fStart -gt $start -and $fEnd -gt $fStart) {
+  $code = $dc.Substring($start, ($fEnd - $start + 2))
+  try { . ([scriptblock]::Create($code)) } catch { Check 'geometry code loads' $false $_.Exception.Message }
+  $scr = @(0, 0, 1920, 1080)
+  $r = @(Get-PanelRect -Screen $scr -Size 'md' -Pos 'right-center')
+  # 38vw x 62vh, right margin 3vw (58px), vertically centred
+  Check 'md/right-center width = 38vw'  ($r[2] -eq 730) $r[2]
+  Check 'md/right-center height = 62vh' ($r[3] -eq 670) $r[3]
+  Check 'md/right-center x keeps the 3vw margin' ($r[0] -eq (1920 - 58 - 730)) $r[0]
+  Check 'md/right-center y is centred' ($r[1] -eq [int][Math]::Round((1080 - 670) / 2)) $r[1]
+  $lt = @(Get-PanelRect -Screen $scr -Size 'xs' -Pos 'left-top')
+  Check 'xs/left-top x = 3vw' ($lt[0] -eq 58) $lt[0]
+  Check 'xs/left-top y = 4vh' ($lt[1] -eq 43) $lt[1]
+  $cb = @(Get-PanelRect -Screen $scr -Size 'sm' -Pos 'center-bottom')
+  Check 'sm/center-bottom is horizontally centred' ($cb[0] -eq [int][Math]::Round((1920 - $cb[2]) / 2)) $cb[0]
+  Check 'sm/center-bottom keeps the 5vh margin' ($cb[1] -eq (1080 - 54 - $cb[3])) $cb[1]
+  $only = @(Get-PanelRect -Screen $scr -Size 'xl' -Pos 'right-center' -CountdownOnly)
+  Check 'countdownOnly clamps a huge panel' ($only[2] -lt 0.40 * 1920 -and $only[3] -lt 0.35 * 1080) "$($only[2])x$($only[3])"
+  Check 'unknown size falls back to md' ((Get-PanelRect -Screen $scr -Size 'zz' -Pos 'left-top')[2] -eq 730)
+  Check 'panel never leaves the screen' (($r[0] -ge 0) -and ($r[1] -ge 0) -and ($r[0] + $r[2] -le 1920))
+} else {
+  Check 'Get-PanelRect found in desktopcore.ps1' $false 'markers not found'
+}
+
 Write-Host ''
 if ($fails -eq 0) { Write-Host 'ALL PASS' } else { Write-Host "$fails FAILURES" }
