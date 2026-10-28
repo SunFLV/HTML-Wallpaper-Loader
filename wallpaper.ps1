@@ -211,6 +211,7 @@ if (Test-Path -LiteralPath $cfgPath) {
       if ($c0.display -and $c0.display.transparent) { $fit = $true }
       $script:PanelFit = [bool]$fit
       if ($c0.display -and $c0.display.useWallpaper) { $script:UseWallpaper = $true }
+      if ($c0.preset -and $c0.preset.parallax) { $script:Parallax = $true }
     }
   } catch {}
 $script:CfgDirtyAt = $null
@@ -246,18 +247,21 @@ if ($null -eq $script:PanelFit) { $script:PanelFit = $false }
 $script:PanelFitKey = ''
 function Get-PanelFitKey {
   $vs = Get-VirtualScreen
-  $size = 'md'; $pos = 'right-center'; $only = $false
+  $size = 'md'; $pos = 'right-center'; $only = $false; $tilt = $false; $para = $false
   try {
     $cfg = $script:Config | ConvertFrom-Json
     if ($cfg.preset) {
       if ($cfg.preset.size) { $size = [string]$cfg.preset.size }
       if ($cfg.preset.pos) { $pos = [string]$cfg.preset.pos }
       $only = [bool]$cfg.preset.countdownOnly
+      $tilt = [bool]$cfg.preset.tilt3d
+      $para = [bool]$cfg.preset.parallax
     }
   } catch {}
-  return "$size|$pos|$only|$($vs[2])x$($vs[3])"
+  return "$size|$pos|$only|$tilt|$para|$($vs[2])x$($vs[3])"
 }
 function Get-PanelFitRect {
+  param([int]$Margin = 0)
   # rect in parent-client / virtual-screen-relative coordinates (see Enter-DesktopMode)
   $vs = Get-VirtualScreen
   $size = 'md'; $pos = 'right-center'; $only = $false
@@ -272,7 +276,18 @@ function Get-PanelFitRect {
       $only = [bool]$cfg.preset.countdownOnly
     } else { return @() }
   } catch {}
-  return (Get-PanelRect -Screen $vs -Size $size -Pos $pos -CountdownOnly:$only)
+  return (Get-PanelRect -Screen $vs -Size $size -Pos $pos -CountdownOnly:$only -Margin $Margin)
+}
+# A tilted / parallax panel needs room around it, otherwise the window edge (which
+# in "panel only" mode hugs the panel) would cut the rotation off.  Keep in sync
+# with --fitm in presets/exam-dock.html.
+$script:PanelMargin = 48
+function Get-PanelMargin {
+  try {
+    $cfg = $script:Config | ConvertFrom-Json
+    if ($cfg.preset -and ($cfg.preset.tilt3d -or $cfg.preset.parallax)) { return $script:PanelMargin }
+  } catch {}
+  return 0
 }
 
 function Apply-PanelFit {
@@ -280,7 +295,8 @@ function Apply-PanelFit {
   $script:PanelFit = [bool]$On
   if ($script:AttachMode -eq 'none') { return }
   $rect = @()
-  if ($script:PanelFit) { $rect = Get-PanelFitRect }
+  $margin = Get-PanelMargin
+  if ($script:PanelFit) { $rect = Get-PanelFitRect -Margin $margin }
   try {
     if (Attach-Wallpaper $script:AttachMode $rect) {
       $h = Get-BrowserWindowHandle $script:WallpaperRec
@@ -293,7 +309,10 @@ function Apply-PanelFit {
           if ([Win32.Native]::GetWindowRect($h, [ref]$wr)) {
             $w = $wr.Right - $wr.Left; $hh = $wr.Bottom - $wr.Top
           }
-          [void](Set-WallpaperRegion $h $w $hh 20)
+          # With a margin the window is bigger than the panel and the panel keeps its
+          # own rounded corners, so rounding the WINDOW would cut the wrong shape.
+          $rad = if ($margin -gt 0) { 0 } else { 20 }
+          [void](Set-WallpaperRegion $h $w $hh $rad)
         } else {
           [void](Set-WallpaperRegion $h 0 0)
         }
@@ -318,6 +337,30 @@ $script:UseWallpaper        = $false
 $script:WallpaperImageSent  = $false
 $script:WallpaperSentPath   = ''
 $script:WallpaperFails      = 0
+
+# ---------------------------------------------------------- mouse parallax pump
+# The desktop icon layer swallows every mouse event before it can reach the page,
+# so the page cannot listen for mousemove itself.  We poll the cursor position and
+# push it into the page as per-mille integers (no decimal separator -> immune to
+# locale), and the CSS transition in the page smooths the ~60 ms steps out.
+$script:Parallax = $false
+$script:PointerTimer = New-Object System.Windows.Forms.Timer
+$script:PointerTimer.Interval = 60
+$script:PointerTimer.add_Tick({
+  try {
+    if (-not $script:Parallax -or $script:Busy) { return }
+    if (-not $script:WallpaperRec -or -not $script:WallpaperRec.Ready -or $script:WallpaperRec.Dead) { return }
+    $p = Get-CursorScreenPos
+    if (-not $p) { return }
+    $vs = Get-VirtualScreen
+    $hw = [Math]::Max(1, [int]($vs[2] / 2)); $hh = [Math]::Max(1, [int]($vs[3] / 2))
+    $mx = [int][Math]::Round((($p[0] - ($vs[0] + $vs[2] / 2.0)) / $hw) * 1000)
+    $my = [int][Math]::Round((($p[1] - ($vs[1] + $vs[3] / 2.0)) / $hh) * 1000)
+    if ($mx -gt 1000) { $mx = 1000 } elseif ($mx -lt -1000) { $mx = -1000 }
+    if ($my -gt 1000) { $my = 1000 } elseif ($my -lt -1000) { $my = -1000 }
+    Push-ScriptTo $script:WallpaperRec "try{window.__htmlbgPointer&&window.__htmlbgPointer($mx,$my);}catch(e){}"
+  } catch {}
+})
 $script:WallpaperChunkChars = 196608   # 144 KB of base64 per ExecuteScriptAsync call
 
 function Push-WallpaperImage {
@@ -418,6 +461,7 @@ function Invoke-HostMessage {
         $c2 = $json | ConvertFrom-Json
         $wantWp = [bool]($c2.display -and $c2.display.useWallpaper)
         $script:UseWallpaper = $wantWp
+        $script:Parallax = [bool]($c2.preset -and $c2.preset.parallax)
         if ($wantWp) {
           if (-not $script:WallpaperImageSent) {
             if (Push-WallpaperImage) { $script:WallpaperImageSent = $true }
@@ -917,9 +961,11 @@ $script:ResizeTimer.add_Tick({
 
 $script:Timer.Start()
 $script:ResizeTimer.Start()
+$script:PointerTimer.Start()
 
 Write-Host 'Running in the system tray. Left-click = settings, right-click = menu.'
 [System.Windows.Forms.Application]::Run($script:Context)
 $script:Timer.Stop()
 $script:ResizeTimer.Stop()
+$script:PointerTimer.Stop()
 Write-Host 'Stopped.'

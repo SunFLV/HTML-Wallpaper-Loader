@@ -97,6 +97,18 @@
 
             <label class="check"><input id="cdOnly" type="checkbox" /> 只显示倒计时面板（隐藏文档区）</label>
 
+            <label class="check"><input id="tilt3d" type="checkbox" /> 3D 面板（向屏幕内倾斜 15°）</label>
+            <p class="hint">
+              按面板所在的边决定翻转方向：靠右的面板<b>右边缘</b>往屏幕里转，靠左转左边缘，
+              靠上 / 靠下则绕横轴转。「只渲染面板」模式下窗口会自动放大一圈给旋转留地方。
+            </p>
+
+            <label class="check"><input id="parallax" type="checkbox" /> 鼠标视差（面板随鼠标轻微移动）</label>
+            <p class="hint">
+              桌面上的壁纸收不到鼠标事件（图标层挡着），所以由宿主每 60ms 读一次光标位置再转给页面，
+              位移上限 ±18px，配合 0.22s 过渡，看起来是平滑跟随。
+            </p>
+
             <label class="row">面板背景色（支持 RGBA）</label>
             <div class="cfg-row color-row">
               <input id="panelColor" type="text" placeholder="留空=默认毛玻璃；rgba(20,18,40,0.6) / #14122a / transparent" spellcheck="false" />

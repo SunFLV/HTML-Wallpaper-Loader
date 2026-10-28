@@ -99,6 +99,13 @@ if ($start -ge 0 -and $fStart -gt $start -and $fEnd -gt $fStart) {
   Check 'countdownOnly clamps a huge panel' ($only[2] -lt 0.40 * 1920 -and $only[3] -lt 0.35 * 1080) "$($only[2])x$($only[3])"
   Check 'unknown size falls back to md' ((Get-PanelRect -Screen $scr -Size 'zz' -Pos 'left-top')[2] -eq 730)
   Check 'panel never leaves the screen' (($r[0] -ge 0) -and ($r[1] -ge 0) -and ($r[0] + $r[2] -le 1920))
+  # 3D tilt / mouse parallax need breathing room: the window must grow around the panel
+  $m = 48
+  $mr = @(Get-PanelRect -Screen $scr -Size 'md' -Pos 'right-center' -Margin $m)
+  Check 'margin grows the window by 2x on both axes' (($mr[2] -eq $r[2] + 2 * $m) -and ($mr[3] -eq $r[3] + 2 * $m)) "$($mr[2])x$($mr[3])"
+  Check 'margin keeps the panel centred in it' (($mr[0] -eq $r[0] - $m) -and ($mr[1] -eq $r[1] - $m)) "$($mr[0]),$($mr[1])"
+  $edge = @(Get-PanelRect -Screen $scr -Size 'md' -Pos 'left-top' -Margin $m)
+  Check 'margin is clamped at the screen edge' (($edge[0] -ge 0) -and ($edge[1] -ge 0) -and ($edge[0] + $edge[2] -le 1920) -and ($edge[1] + $edge[3] -le 1080)) "$($edge[0]),$($edge[1]) $($edge[2])x$($edge[3])"
 } else {
   Check 'Get-PanelRect found in desktopcore.ps1' $false 'markers not found'
 }

@@ -31,6 +31,14 @@
     box-shadow: 0 24px 70px rgba(0,0,0,.42), inset 0 1px 0 rgba(255,255,255,.10);
     backdrop-filter: blur(var(--glass-blur, 18px)) saturate(140%);
     -webkit-backdrop-filter: blur(var(--glass-blur, 18px)) saturate(140%);
+    /* 3D 倾斜 / 鼠标视差 / 居中位移 —— 全部合成到一条 transform 上：
+       --dx/--dy 是 p-* 的居中位移，--px/--py 是鼠标视差，--ry/--rx 是 3D 倾斜 */
+    --dx: 0px; --dy: 0px; --px: 0px; --py: 0px; --ry: 0deg; --rx: 0deg;
+    --persp: 1400px; --fitm: 48px;
+    transform: perspective(var(--persp)) translate(var(--dx), var(--dy))
+               translate3d(var(--px), var(--py), 0)
+               rotateY(var(--ry)) rotateX(var(--rx));
+    transition: transform .22s ease-out;
   }
   #dock.s-xs { width: 22vw; height: 30vh; padding: 12px 14px; border-radius: 16px; }
   #dock.s-sm { width: 30vw; height: 44vh; padding: 15px 17px; }
@@ -39,21 +47,31 @@
   #dock.s-xl { width: 62vw; height: 88vh; }
 
   #dock.p-left-top    { left: 3vw;  top: 4vh; }
-  #dock.p-center-top  { left: 50%;  top: 4vh; transform: translateX(-50%); }
+  #dock.p-center-top  { left: 50%;  top: 4vh; --dx: -50%; }
   #dock.p-right-top   { right: 3vw; top: 4vh; }
-  #dock.p-left-center { left: 3vw;  top: 50%; transform: translateY(-50%); }
-  #dock.p-center      { left: 50%;  top: 50%; transform: translate(-50%, -50%); }
-  #dock.p-right-center{ right: 3vw; top: 50%; transform: translateY(-50%); }
+  #dock.p-left-center { left: 3vw;  top: 50%; --dy: -50%; }
+  #dock.p-center      { left: 50%;  top: 50%; --dx: -50%; --dy: -50%; }
+  #dock.p-right-center{ right: 3vw; top: 50%; --dy: -50%; }
   #dock.p-left-bottom { left: 3vw;  bottom: 5vh; }
-  #dock.p-center-bottom{ left: 50%; bottom: 5vh; transform: translateX(-50%); }
+  #dock.p-center-bottom{ left: 50%; bottom: 5vh; --dx: -50%; }
   #dock.p-right-bottom{ right: 3vw; bottom: 5vh; }
 
   /* 「只渲染面板」模式：宿主把窗口裁成面板大小，面板直接铺满整块窗口。
-     （放在位置规则之后，并加 !important，压掉 p-* 的定位与 transform） */
+     （放在位置规则之后，并加 !important，压掉 p-* 的定位） */
   #dock.fit {
     left: 0 !important; right: 0 !important; top: 0 !important; bottom: 0 !important;
     width: auto !important; height: auto !important;
-    transform: none !important; border-radius: 0;
+    /* 铺满窗口时不需要居中位移，但 3D 倾斜 / 视差仍要保留 */
+    --dx: 0px; --dy: 0px;
+    border-radius: 0;
+  }
+  /* 开了 3D 倾斜或视差后，宿主把窗口做得比面板大一圈（给旋转/位移留地方），
+     面板按同一个 --fitm 内缩，和宿主端的 $script:PanelMargin 必须一致。 */
+  #dock.fit.inset {
+    left: var(--fitm) !important; right: var(--fitm) !important;
+    top: var(--fitm) !important; bottom: var(--fitm) !important;
+    border-radius: 20px;
+    box-shadow: 0 24px 70px rgba(0,0,0,.42), inset 0 1px 0 rgba(255,255,255,.10);
   }
 
   /* ---------------- countdown ---------------- */
@@ -203,6 +221,7 @@
   var DEFAULTS = {
     id: "exam-dock", examDate: "2027-06-07", docPath: "", fontSize: 22,
     scrollSpeed: 26, showCountdown: true, countdownOnly: false, fitPanel: false,
+    tilt3d: false, parallax: false,
     panelColor: "", label: "距离高考", pos: "right-center", size: "md", paused: false
   };
   var P = Object.assign({}, DEFAULTS);
@@ -224,8 +243,11 @@
     $("count").style.display = P.showCountdown ? "" : "none";
     $("cdLabel").textContent = P.label || DEFAULTS.label;
     var dock = $("dock");
+    // 3D 倾斜 / 视差时窗口比面板大一圈，面板要内缩（见 CSS 里的 #dock.fit.inset）
+    var needsRoom = !!(P.tilt3d || P.parallax);
     dock.className = "p-" + (P.pos || "right-center") + " s-" + (P.size || "md") +
-      (P.fitPanel ? " fit" : "");
+      (P.fitPanel ? " fit" : "") + ((P.fitPanel && needsRoom) ? " inset" : "");
+    applyTilt();
     // 「只显示倒计时面板」：隐藏文档区，面板高度收缩到内容
     var only = !!P.countdownOnly;
     $("reader").style.display = only ? "none" : "";
@@ -261,6 +283,34 @@
       $("tSize").value = P.size;
     }
     tickCountdown();
+  }
+
+  // ------------------------------------------------------------- 3D / 视差 ----
+  // 3D：面板朝「屏幕内部」方向翻转 15° —— 靠右边的面板右边缘往里转，靠左边的左边缘往里转，
+  // 靠上/下的同理绕 X 轴。perspective 写在 CSS 的 transform 里。
+  var TILT_DEG = 15;
+  function applyTilt() {
+    var dock = $("dock");
+    var ry = 0, rx = 0;
+    if (P.tilt3d) {
+      var pos = String(P.pos || "right-center");
+      var parts = pos.split("-");
+      if (parts[0] === "left") { ry = -TILT_DEG; }        // 左边缘转入屏幕
+      else if (parts[0] === "right") { ry = TILT_DEG; }   // 右边缘转入屏幕
+      if (parts[1] === "top") { rx = TILT_DEG; }          // 上边缘转入屏幕
+      else if (parts[1] === "bottom") { rx = -TILT_DEG; } // 下边缘转入屏幕
+    }
+    dock.style.setProperty("--ry", ry + "deg");
+    dock.style.setProperty("--rx", rx + "deg");
+  }
+
+  // 鼠标视差：宿主轮询光标（桌面图标层吃掉了页面的鼠标事件），转发到这里
+  var PARALLAX_PX = 18;
+  function applyParallax(nx, ny) {
+    var dock = $("dock");
+    if (!P.parallax) { nx = 0; ny = 0; }
+    dock.style.setProperty("--px", (nx * PARALLAX_PX).toFixed(1) + "px");
+    dock.style.setProperty("--py", (ny * PARALLAX_PX).toFixed(1) + "px");
   }
 
   function ask(kind, payload) {
@@ -468,6 +518,8 @@
       }
       applyPreset(m.preset);
       setTimeout(syncFile, 80);
+    } else if (m.type === "pointer") {
+      applyParallax(m.x || 0, m.y || 0);
     } else if (m.type === "file" && m.file) {
       putFile(m.file);
     }

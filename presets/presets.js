@@ -25,6 +25,8 @@
         showCountdown: true,
         countdownOnly: false,
         fitPanel: false,
+        tilt3d: false,
+        parallax: false,
         panelColor: "",
         label: "距离高考",
         pos: "right-center",

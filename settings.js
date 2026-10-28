@@ -21,6 +21,9 @@
         countdownOnly: false,
         // 只渲染面板：壁纸窗口被裁到面板这一块，其余露出系统壁纸（宿主负责改窗口）
         fitPanel: false,
+        // 3D 倾斜 15° / 鼠标视差（面板随鼠标移动）
+        tilt3d: false,
+        parallax: false,
         panelColor: "",
         label: "距离高考",
         pos: "right-center",
@@ -675,6 +678,12 @@
       }
       save();
     });
+    $("tilt3d").addEventListener("change", function () {
+      state.preset.tilt3d = this.checked; save();
+    });
+    $("parallax").addEventListener("change", function () {
+      state.preset.parallax = this.checked; save();
+    });
     $("panelColor").addEventListener("input", function () {
       state.preset.panelColor = this.value.trim(); save();
     });
@@ -723,6 +732,8 @@
     if (examOnly) examOnly.classList.toggle("off", p.id !== "exam-dock");
     $("fitPanel").checked = !!p.fitPanel;
     $("cdOnly").checked = !!p.countdownOnly;
+    $("tilt3d").checked = !!p.tilt3d;
+    $("parallax").checked = !!p.parallax;
     $("panelColor").value = p.panelColor || "";
     document.querySelectorAll("#posGrid .magnet").forEach(function (b) {
       b.classList.toggle("active", b.getAttribute("data-pos") === (p.pos || "right-center"));

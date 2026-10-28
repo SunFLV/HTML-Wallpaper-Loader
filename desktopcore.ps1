@@ -637,7 +637,7 @@ $script:PanelSizeFrac = @{
 }
 
 function Get-PanelRect {
-  param([int[]]$Screen, [string]$Size = 'md', [string]$Pos = 'right-center', [switch]$CountdownOnly)
+  param([int[]]$Screen, [string]$Size = 'md', [string]$Pos = 'right-center', [switch]$CountdownOnly, [int]$Margin = 0)
   # $Screen = @(x, y, w, h) of the virtual screen (physical pixels)
   $W = $Screen[2]; $H = $Screen[3]
   $frac = $script:PanelSizeFrac[[string]$Size]
@@ -669,6 +669,18 @@ function Get-PanelRect {
   }
   if ($x -lt 0) { $x = 0 }
   if ($y -lt 0) { $y = 0 }
+  # Extra breathing room around the panel.  Needed when the panel is tilted in 3D or
+  # moves with the mouse: in "panel only" mode the window IS the panel, so a rotated
+  # / shifted panel would otherwise be cut off by the window edge.  The page insets
+  # its #dock by the same amount (CSS --fitm, see presets/exam-dock.html).
+  if ($Margin -gt 0) {
+    $x = $x - $Margin; $y = $y - $Margin
+    $pw = $pw + 2 * $Margin; $ph = $ph + 2 * $Margin
+    if ($x -lt 0) { $pw = $pw + $x; $x = 0 }
+    if ($y -lt 0) { $ph = $ph + $y; $y = 0 }
+    if ($x + $pw -gt $W) { $pw = $W - $x }
+    if ($y + $ph -gt $H) { $ph = $H - $y }
+  }
   return @($x, $y, $pw, $ph)
 }
 

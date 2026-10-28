@@ -94,7 +94,8 @@
     if (glassEl) { return; }
     glassEl = document.createElement("div");
     glassEl.id = "htmlbgGlass";
-    glassEl.style.cssText = "position:absolute;overflow:hidden;pointer-events:none;display:none;";
+    glassEl.style.cssText = "position:absolute;overflow:hidden;pointer-events:none;display:none;" +
+                            "transition:transform .2s ease-out;will-change:transform;";
     glassImg = document.createElement("div");
     glassImg.style.cssText = "position:absolute;background-repeat:no-repeat;";
     var tint = document.createElement("div");
@@ -157,6 +158,7 @@
     var blur = (d.glassBlur != null) ? d.glassBlur : 18;
     document.documentElement.style.setProperty("--glass-blur", blur + "px");
     applyWallpaper();
+    applyParallax();
   }
 
   var currentCfg = null;
@@ -242,6 +244,33 @@
     } catch (e) {}
   }
 
+  // ---------- 鼠标视差 ----------
+  // The host polls the cursor (the desktop icon layer eats the page's own mouse
+  // events) and pushes it here in per-mille.  The glass card lives in THIS page, so
+  // it moves here too; the panel itself lives in the iframe and gets relayed.
+  var PARALLAX_PX = 18;      // 面板随鼠标移动的最大位移（像素）
+  var paraX = 0, paraY = 0;
+  window.__htmlbgPointer = function (mx, my) {
+    paraX = mx / 1000;
+    paraY = my / 1000;
+    applyParallax();
+    try {
+      var msg = { type: "pointer", x: paraX, y: paraY };
+      if (frame.contentWindow) frame.contentWindow.postMessage({ htmlbg: msg }, "*");
+    } catch (e) {}
+    return "ok";
+  };
+
+  function applyParallax() {
+    var on = !!(currentCfg && currentCfg.preset && currentCfg.preset.parallax);
+    var dx = on ? (paraX * PARALLAX_PX) : 0;
+    var dy = on ? (paraY * PARALLAX_PX) : 0;
+    if (!glassEl) { ensureGlass(); }
+    if (glassEl) {
+      glassEl.style.transform = "translate3d(" + dx.toFixed(1) + "px," + dy.toFixed(1) + "px,0)";
+    }
+  }
+
   frame.addEventListener("load", function () {
     var out = pendingToIframe.splice(0);
     out.forEach(function (m) {
@@ -289,6 +318,7 @@
     preset: {
       id: "", examDate: "2027-06-07", docPath: "", fontSize: 22,
       scrollSpeed: 26, showCountdown: true, countdownOnly: false, fitPanel: false,
+      tilt3d: false, parallax: false,
       panelColor: "", label: "距离高考", pos: "right-center", size: "md", paused: false
     },
     files: {}
