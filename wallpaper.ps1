@@ -205,6 +205,15 @@ $script:PageSlots = $null
 # page without a COM host object); we talk to the page with ExecuteScriptAsync.
 # The marker "[HTMLBG-WP]" / "[HTMLBG-SET]" stays in the title so the external-Edge
 # fallback can still find the window.
+# Tells the settings page that a host exists.  renderFileSlots() picks its branch
+# from __htmlbgHasHost, and the page's document.title queue holds only ONE pending
+# message - so 'hello' can be overwritten by the first config report and the flag
+# would never arrive.  Every host->settings push therefore re-asserts it (setting
+# the flag + re-rendering is idempotent, so calling this repeatedly is harmless).
+function Mark-HostToSettings {
+  Push-ScriptTo $script:SettingsRec "try{window.__htmlbgHasHost=true;window.__htmlbgHostReady&&window.__htmlbgHostReady();}catch(e){}"
+}
+
 function Invoke-HostMessage {
   param($Rec, [string]$Kind, [string]$Payload)
   # Messages travel in document.title and must be cleared afterwards, otherwise the
@@ -212,9 +221,10 @@ function Invoke-HostMessage {
   $ack = "try{window.__htmlbgAck&&window.__htmlbgAck();}catch(e){}"
   switch ($Kind) {
     'hello' {
-      # The page probes for a host.  Acknowledging tells it that host messaging
-      # works, so the UI can prefer it over plain localStorage.
-      Push-ScriptTo $Rec "try{window.__htmlbgHasHost=true;}catch(e){}"
+      # The page probes for a host.  Mark-HostToSettings both acknowledges host
+      # messaging and re-renders the file slots with the host branch (the 「选择文件」
+      # button).
+      Mark-HostToSettings
       Push-ScriptTo $Rec $ack
       Update-SlotScan
     }
@@ -227,6 +237,10 @@ function Invoke-HostMessage {
       $script:CfgCount++
       if ($script:CfgCount -le 5) { Write-Host "config forwarded to wallpaper (#$($script:CfgCount), $($json.Length) bytes)" }
       Push-ScriptTo $script:WallpaperRec "try{window.__htmlbgApplyCfg && window.__htmlbgApplyCfg(decodeURIComponent('$([System.Uri]::EscapeDataString($json))'));}catch(e){}"
+      # 'cfg' is the message that is guaranteed to arrive on every settings-window
+      # open (the page reports its config right after load), so it doubles as the
+      # reliable place to assert "a host exists" and render 「选择文件」.
+      Mark-HostToSettings
       Update-SlotScan
       Push-ScriptTo $Rec $ack
     }
@@ -294,6 +308,7 @@ function Invoke-HostMessage {
         $o = $json | ConvertFrom-Json
         Write-Host ("slots reported by page: " + @($o.slots).Count + " -> " + (($o.slots | ForEach-Object { $_.key }) -join ', ') + "  from " + $o.href)
       } catch {}
+      Mark-HostToSettings
       Push-ScriptTo $script:SettingsRec "try{window.__htmlbgSlots && window.__htmlbgSlots(decodeURIComponent('$([Uri]::EscapeDataString($json))'));}catch(e){}"
       Push-ScriptTo $Rec $ack
     }
@@ -372,7 +387,8 @@ function Invoke-HostMessage {
 # called from the timer rather than awaited.
 function Push-ScriptTo {
   param($Rec, [string]$Js)
-  if (-not $Rec -or -not $Rec.Ready -or $Rec.Engine -ne 'webview2' -or -not $Rec.View.CoreWebView2) { return }
+  if (-not $Rec -or -not $Rec.Ready -or $Rec.Dead -or $Rec.Engine -ne 'webview2') { return }
+  if ($Rec.Form -and $Rec.Form.IsDisposed) { $Rec.Dead = $true; return }
   try { [void]$Rec.View.CoreWebView2.ExecuteScriptAsync($Js) } catch { Write-Host "script error: $($_.Exception.Message)" }
 }
 
@@ -412,13 +428,23 @@ function Invoke-NextMode {
 }
 
 function Open-SettingsWindow {
-  if ($script:SettingsRec -and $script:SettingsRec.Form -and
-      [Win32.Native]::IsWindow($script:SettingsRec.Form.Handle)) {
+  # Reuse the existing window only if it is genuinely alive.  After the user closes
+  # it, WinForms has disposed the Form and .Handle is unusable - touching it throws,
+  # and that exception used to abort this handler so the window could never be
+  # reopened (file picking stayed broken as well).
+  if (Test-BrowserWindowAlive $script:SettingsRec) {
     $h = $script:SettingsRec.Form.Handle
     [void][Win32.Native]::ShowWindow($h, 9)              # SW_RESTORE
     [void][Win32.Native]::SetForegroundWindow($h)
     Push-ScriptTo $script:SettingsRec "try{window.__htmlbgRefresh&&window.__htmlbgRefresh();}catch(e){}"
     return
+  }
+  # Drop the dead window from the browser list so reopening does not pile up
+  # disposed records every time.
+  if ($script:SettingsRec) {
+    $script:SettingsRec.Dead = $true
+    $BC.Windows = @($BC.Windows | Where-Object { -not $_.Dead })
+    $script:SettingsRec = $null
   }
   $settingsUrl = Convert-FileUrl (Join-Path $ScriptDir 'settings.html')
   $script:SettingsRec = New-BrowserWindow -Url $settingsUrl `
@@ -452,6 +478,15 @@ function Invoke-Refit {
 $script:Context = New-Object System.Windows.Forms.ApplicationContext
 $script:Notify  = New-Object System.Windows.Forms.NotifyIcon
 
+# Safety net: without this, ANY exception raised inside a UI callback (tray menu,
+# timer tick) pops the WinForms "unhandled exception" dialog the user has to dismiss,
+# which is exactly what happened when the closed settings window was reopened.
+# Log it and keep running instead.
+[System.Windows.Forms.Application]::add_ThreadException({
+  param($sender, $e)
+  Write-Host "UI exception: $($e.Exception.GetType().Name): $($e.Exception.Message)"
+})
+
 $icoPath = Join-Path $ScriptDir 'icon.ico'
 if (Test-Path $icoPath) {
   $script:Notify.Icon = New-Object System.Drawing.Icon($icoPath)
@@ -461,29 +496,34 @@ if (Test-Path $icoPath) {
 $script:Notify.Text = 'HTML 壁纸加载器'
 
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
+# Every tray handler is wrapped: an unhandled exception here pops the WinForms
+# "unhandled exception" dialog (and used to leave the tray dead) instead of just
+# logging to the console we own.
+function Invoke-Tray { param([scriptblock]$Body) try { & $Body } catch { Write-Host "tray action failed: $($_.Exception.Message)" } }
+
 $miOpen = $menu.Items.Add('打开设置')
 $miOpen.Font = New-Object System.Drawing.Font($miOpen.Font, [System.Drawing.FontStyle]::Bold)
-$miOpen.add_Click({ Open-SettingsWindow })
+$miOpen.add_Click({ Invoke-Tray { Open-SettingsWindow } })
 
 $miRefit = $menu.Items.Add('重新贴合桌面')
-$miRefit.add_Click({ Invoke-Refit })
+$miRefit.add_Click({ Invoke-Tray { Invoke-Refit } })
 
 $script:miMode = $menu.Items.Add('切换挂接模式')
-$script:miMode.add_Click({ Invoke-NextMode })
+$script:miMode.add_Click({ Invoke-Tray { Invoke-NextMode } })
 
 $miFolder = $menu.Items.Add('打开配置文件夹')
-$miFolder.add_Click({ Start-Process -FilePath 'explorer.exe' -ArgumentList $ScriptDir | Out-Null })
+$miFolder.add_Click({ Invoke-Tray { Start-Process -FilePath 'explorer.exe' -ArgumentList $ScriptDir | Out-Null } })
 
 $sep = New-Object System.Windows.Forms.ToolStripSeparator
 [void]$menu.Items.Add($sep)
 
 $miQuit = $menu.Items.Add('退出')
-$miQuit.add_Click({ Invoke-Quit })
+$miQuit.add_Click({ Invoke-Tray { Invoke-Quit } })
 
 $script:Notify.ContextMenuStrip = $menu
 $script:Notify.add_MouseClick({
   param($sender, $e)
-  if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) { Open-SettingsWindow }
+  if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) { Invoke-Tray { Open-SettingsWindow } }
 })
 $script:Notify.Visible = $true
 
@@ -508,6 +548,16 @@ $script:AnnouncedFail  = $false
 $script:Timer = New-Object System.Windows.Forms.Timer
 $script:Timer.Interval = 200
 $script:Timer.add_Tick({
+  # The whole tick is wrapped: an unhandled exception here shows the WinForms
+  # "unhandled exception" dialog and stops the timer (the wallpaper then freezes).
+  try { Tick-All } catch { Write-Host "tick error: $($_.Exception.Message)" }
+})
+
+function Tick-All {
+  # While a native modal dialog runs (ShowDialog pumps its own message loop), the
+  # WinForms timer keeps firing.  Re-entering the tick then could quit the app or
+  # close the very window that owns the dialog, so skip ticks while busy.
+  if ($script:Busy) { return }
   try { Update-BrowserWindows } catch { Write-Host "browser update error: $($_.Exception.Message)" }
 
   # ---- preset option changes are persisted with a short delay -----------------
@@ -523,8 +573,9 @@ $script:Timer.add_Tick({
 
   # ---- page -> host messages (delivered through document.title) ---------------
   foreach ($rec in @($script:SettingsRec, $script:WallpaperRec)) {
-    if (-not $rec -or -not $rec.Ready) { continue }
-    if ($rec.Engine -ne 'webview2' -or -not $rec.View.CoreWebView2) { continue }
+    if (-not $rec -or -not $rec.Ready -or $rec.Dead) { continue }
+    if ($rec.Engine -ne 'webview2') { continue }
+    if ($rec.Form -and $rec.Form.Disposed) { $rec.Dead = $true; continue }
     try {
       $t = $rec.View.CoreWebView2.DocumentTitle
       if ($t -and $t -ne $rec.LastTitle) {
@@ -598,7 +649,7 @@ $script:Timer.add_Tick({
     if ($drift) { $script:Targets = Get-DesktopTargets }
     [void](Attach-Wallpaper $script:AttachMode)
   }
-})
+}
 
 # Re-fit when the resolution / monitor layout changes.  Positioning is done by
 # Attach-Wallpaper (parent-client coordinates), never by Form.Bounds, because the

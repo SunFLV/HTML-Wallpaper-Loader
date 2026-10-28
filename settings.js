@@ -74,6 +74,15 @@
     try { hostSend("cfg", JSON.stringify(serialize(state))); } catch (e) {}
   }
 
+  // 宿主确认存在。必须在设置标志后立即重绘文件槽：renderFileSlots() 在 build()
+  // 里先跑过一次，那时 __htmlbgHasHost 还是 false，槽位会被画成浏览器分支的
+  // <input type=file>（宿主拿不到那种选择结果），导致「选择文件」按钮不出现。
+  // 宿主每次推送都会重申一次，所以只在标志真正翻转时重绘，免得拖滑块时反复重建 DOM。
+  window.__htmlbgHostReady = function () {
+    if (!window.__htmlbgHasHost) { window.__htmlbgHasHost = true; renderFileSlots(); }
+    return "ok";
+  };
+
   // 宿主处理完一条消息后调用，恢复标题以便下一条能被识别为变化
   window.__htmlbgAck = function () {
     hostPending = null;
@@ -180,6 +189,13 @@
   function renderFileSlots() {
     var box = $("fileSlots");
     if (!box) return;
+    // 重绘前保留用户正在填写、尚未绑定的路径，免得宿主推送把输入框清空
+    var prevTyped = {};
+    box.querySelectorAll(".slot-item").forEach(function (it) {
+      var k = it.getAttribute("data-key");
+      var inp = it.querySelector(".slot-path-input");
+      if (k && inp && inp.value) { prevTyped[k] = inp.value; }
+    });
     box.innerHTML = "";
     if (!detectedSlots.length) {
       var none = document.createElement("p");
@@ -243,7 +259,7 @@
       path.type = "text";
       path.className = "slot-path-input";
       path.placeholder = "相对或绝对路径，例如 C:\\Users\\me\\简历.pdf";
-      path.value = boundPath;
+      path.value = boundPath || prevTyped[slotKey] || "";
       row.appendChild(path);
 
       // 3) 绑定文件 / 清除

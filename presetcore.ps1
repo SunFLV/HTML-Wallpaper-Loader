@@ -289,8 +289,7 @@ function Open-DocumentDialog {
     # front and pin it on top for the duration of the dialog so the picker is always
     # visible and clickable; restore afterwards.
     $owner = $null
-    if ($script:SettingsRec -and $script:SettingsRec.Form -and
-        [Win32.Native]::IsWindow($script:SettingsRec.Form.Handle)) {
+    if (Test-BrowserWindowAlive $script:SettingsRec) {
       $owner = $script:SettingsRec.Form
       try {
         [void][Win32.Native]::ShowWindow($owner.Handle, 9)          # SW_RESTORE
@@ -300,12 +299,16 @@ function Open-DocumentDialog {
         $owner.Activate()
       } catch {}
     }
-                        try {
-                          $res = if ($owner) { $dlg.ShowDialog($owner) } else { $dlg.ShowDialog() }
-                        } finally {
-                          if ($owner) { try { $owner.TopMost = $false } catch {} }
-                        }
-                        if ($res -ne [System.Windows.Forms.DialogResult]::OK) { return '' }
+    try {
+      # The WinForms timer keeps firing during the modal loop; tell the main tick
+      # to stand down so it cannot quit or close the window that owns this dialog.
+      $script:Busy = $true
+      $res = if ($owner) { $dlg.ShowDialog($owner) } else { $dlg.ShowDialog() }
+    } finally {
+      $script:Busy = $false
+      if ($owner) { try { $owner.TopMost = $false } catch {} }
+    }
+    if ($res -ne [System.Windows.Forms.DialogResult]::OK) { return '' }
     return $dlg.FileName
   } catch {
     Write-Host "Open-DocumentDialog failed: $($_.Exception.Message)"
@@ -417,5 +420,11 @@ function Update-SlotScan {
     $slotsJson = [string]$script:SlotScanCache[$path]
   }
   $json = '{"slots":' + $slotsJson + ',"path":' + (Convert-ToJsonString $path) + '}'
+  # Tell the page the host exists BEFORE pushing slots: renderFileSlots() picks its
+  # branch from __htmlbgHasHost, and the 'hello' ack can be lost (the page queues
+  # only one message at a time, so the first reportToHost() can overwrite hello).
+  # Without this the slot row gets rendered as a browser-side <input type=file>
+  # instead of the host-backed 「选择文件」 button.
+  Push-ScriptTo $script:SettingsRec "try{window.__htmlbgHasHost=true;window.__htmlbgHostReady&&window.__htmlbgHostReady();}catch(e){}"
   Push-ScriptTo $script:SettingsRec "try{window.__htmlbgSlots && window.__htmlbgSlots(decodeURIComponent('$([Uri]::EscapeDataString($json))'));}catch(e){}"
 }

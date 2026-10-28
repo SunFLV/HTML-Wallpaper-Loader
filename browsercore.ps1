@@ -301,6 +301,7 @@ function New-BrowserWindow {
     Hwnd   = [IntPtr]::Zero
     OnReady = $null
     LastTitle = ''
+    Dead   = $false          # set once the window has been closed/disposed
   }
 
   if ($BC.Engine -eq 'edge') {
@@ -390,7 +391,9 @@ function Update-BrowserWindows {
 
     # ---- in-process -------------------------------------------------------------
     $form = $rec.Form
-    if (-not [Win32.Native]::IsWindow($form.Handle)) { $rec.Failed = $true; $rec.Error = 'window vanished'; continue }
+    if (-not (Test-BrowserWindowAlive $rec)) {
+      $rec.Failed = $true; $rec.Error = 'window vanished'; continue
+    }
 
     # stage 0: kick off environment creation (async, never blocking)
     if ($rec.Stage -eq 0) {
@@ -472,18 +475,41 @@ function Update-BrowserWindows {
 
 function Get-BrowserWindowHandle {
   param($Rec)
-  if ($rec.Engine -eq 'edge') { return $rec.Hwnd }
-  if ($rec.Form -and [Win32.Native]::IsWindow($rec.Form.Handle)) { return $rec.Form.Handle }
+  if (-not $Rec) { return [IntPtr]::Zero }
+  if ($Rec.Engine -eq 'edge') { return $Rec.Hwnd }
+  if (Test-BrowserWindowAlive $Rec) { return $Rec.Form.Handle }
   return [IntPtr]::Zero
+}
+
+# Is this window record still usable?  Once a Form is closed, WinForms DISPOSES it:
+# .Handle then yields nothing at all, and handing that to IsWindow() throws
+# "无法将空值转换为类型 System.IntPtr" - which, under $ErrorActionPreference='Stop',
+# killed the tray menu handler and left the settings window un-reopenable.
+# Disposed/IsHandleCreated are safe to query on a disposed Control, so test them
+# FIRST and never touch .Handle for a dead window.
+function Test-BrowserWindowAlive {
+  param($Rec)
+  if (-not $Rec -or $Rec.Dead) { return $false }
+  if ($Rec.Kind -eq 'external') {
+    return ($Rec.Hwnd -ne [IntPtr]::Zero -and [Win32.Native]::IsWindow($Rec.Hwnd))
+  }
+  if (-not $Rec.Form) { return $false }
+  if ($Rec.Form.IsDisposed) { $Rec.Dead = $true; return $false }
+  if (-not $Rec.Form.IsHandleCreated) { return $false }
+  if (-not [Win32.Native]::IsWindow($Rec.Form.Handle)) { $Rec.Dead = $true; return $false }
+  return $true
 }
 
 function Close-BrowserWindow {
   param($Rec)
-  if ($rec.Kind -eq 'external') {
-    if ($rec.Hwnd -ne [IntPtr]::Zero -and [Win32.Native]::IsWindow($rec.Hwnd)) {
-      [void][Win32.Native]::SendMessage($rec.Hwnd, $WM_CLOSE, [IntPtr]::Zero, [IntPtr]::Zero)
+  if (-not $Rec) { return }
+  if ($Rec.Kind -eq 'external') {
+    if ($Rec.Hwnd -ne [IntPtr]::Zero -and [Win32.Native]::IsWindow($Rec.Hwnd)) {
+      [void][Win32.Native]::SendMessage($Rec.Hwnd, $WM_CLOSE, [IntPtr]::Zero, [IntPtr]::Zero)
     }
+    $Rec.Dead = $true
     return
   }
-  try { if ($rec.Form) { $rec.Form.Close(); $rec.Form.Dispose() } } catch {}
+  try { if ($Rec.Form -and -not $Rec.Form.IsDisposed) { $Rec.Form.Close(); $Rec.Form.Dispose() } } catch {}
+  $Rec.Dead = $true
 }
