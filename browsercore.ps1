@@ -173,8 +173,15 @@ function Install-WebView2Runtime {
     $zip.Dispose()
     Remove-Item -LiteralPath $pkg -Force -ErrorAction SilentlyContinue
     $folder = Find-LocalRuntimeFolder -Base $dest
-    if ($folder) { $script:RuntimeSource = 'downloaded' }
-    return $folder
+    # A usable runtime MUST contain the actual Chromium engine (msedge.dll).  The
+    # nuget 'WebView2.Runtime.X64' package ships without it, so reject an
+    # incomplete download instead of booting a wallpaper that can never paint.
+    if ($folder -and (Test-Path (Join-Path $folder 'msedge.dll'))) {
+      $script:RuntimeSource = 'downloaded'
+      return $folder
+    }
+    Write-Host "downloaded WebView2 runtime is incomplete (msedge.dll missing) - keeping the existing fallback"
+    return $null
   } catch {
     Write-Host "WebView2 runtime extraction failed: $($_.Exception.Message)"
     return $null
