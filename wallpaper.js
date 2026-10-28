@@ -84,50 +84,26 @@
     return "ok";
   };
 
-  // 毛玻璃卡片必须画在**宿主页面**里：iframe 内的 backdrop-filter 只能看到 iframe
-  // 自己的内容（iframe 的文档根就是一个 backdrop root），糊不到父页面的壁纸。
-  // 所以这里用一张「放大一圈的壁纸副本 + CSS filter: blur()」塞进圆角容器，
-  // 容器边缘 overflow:hidden，得到干净的圆角毛玻璃。
-  var glassEl = null;
-  var glassImg = null;
-  function ensureGlass() {
-    if (glassEl) { return; }
-    glassEl = document.createElement("div");
-    glassEl.id = "htmlbgGlass";
-    glassEl.style.cssText = "position:absolute;overflow:hidden;pointer-events:none;display:none;" +
-                            "transition:transform .2s ease-out;will-change:transform;";
-    glassImg = document.createElement("div");
-    glassImg.style.cssText = "position:absolute;background-repeat:no-repeat;";
-    var tint = document.createElement("div");
-    tint.style.cssText = "position:absolute;inset:0;background:linear-gradient(160deg,rgba(22,20,44,.30),rgba(12,11,26,.22));";
-    glassEl.appendChild(glassImg);
-    glassEl.appendChild(tint);
-    stage.insertBefore(glassEl, frameWrap);
-  }
-
-  function applyGlass() {
-    ensureGlass();
+  // 毛玻璃不能画在宿主页面里：面板带着视差位移和 3D 旋转，父页面那张卡片不会跟着
+  // 走，于是面板外会露出一圈错位的「多重阴影」。改成把壁纸连同它在整屏里的位置转发
+  // 进 iframe，由面板自己画在**内部**（见 presets/exam-dock.html 的 #glass），
+  // 这样位移、旋转天然同步。图片只在变化时下发一次，避免拖滑条时反复传几百 KB。
+  var wpSentUrl = "";
+  function pushWallpaperToIframe() {
     var d = (currentCfg && currentCfg.display) || {};
-    var on = !!d.useWallpaper && !!wpUrl && !!(wpLayout && wpLayout.pw > 0 && wpLayout.ph > 0);
-    if (!on) { glassEl.style.display = "none"; return; }
-    var L = wpLayout;
-    var bleed = 80;                       // 模糊会向外溢出，多给一圈免得边缘发虚
-    var blur = (d.glassBlur != null) ? d.glassBlur : 18;
-    glassEl.style.display = "block";
-    glassEl.style.left = L.px + "px";
-    glassEl.style.top = L.py + "px";
-    glassEl.style.width = L.pw + "px";
-    glassEl.style.height = L.ph + "px";
-    glassEl.style.borderRadius = (L.fit ? 0 : 20) + "px";
-    glassImg.style.left = (-bleed) + "px";
-    glassImg.style.top = (-bleed) + "px";
-    glassImg.style.right = (-bleed) + "px";
-    glassImg.style.bottom = (-bleed) + "px";
-    glassImg.style.backgroundImage = 'url("' + wpUrl + '")';
-    glassImg.style.backgroundSize = L.sw + "px " + L.sh + "px";
-    // 壁纸图的左上角在页面坐标 (-ox,-oy)；这张副本相对容器又外扩了 bleed
-    glassImg.style.backgroundPosition = (bleed - L.ox - L.px) + "px " + (bleed - L.oy - L.py) + "px";
-    glassImg.style.filter = "blur(" + blur + "px) saturate(140%)";
+    var w = {
+      on: !!d.useWallpaper && !!wpUrl,
+      sw: (wpLayout && wpLayout.sw) || window.innerWidth,
+      sh: (wpLayout && wpLayout.sh) || window.innerHeight,
+      ox: (wpLayout && wpLayout.ox) || 0,
+      oy: (wpLayout && wpLayout.oy) || 0,
+      blur: (d.glassBlur != null) ? d.glassBlur : 18
+    };
+    if (w.on && wpUrl !== wpSentUrl) { w.data = wpUrl; wpSentUrl = wpUrl; }
+    var msg = { type: "wallpaper", wallpaper: w };
+    try {
+      if (frame.contentWindow) frame.contentWindow.postMessage({ htmlbg: msg }, "*");
+    } catch (e) {}
   }
 
   function applyWallpaper() {
@@ -136,7 +112,7 @@
       stage.style.backgroundImage = "";
       stage.style.backgroundSize = "";
       stage.style.backgroundPosition = "";
-      applyGlass();
+      pushWallpaperToIframe();
       return;
     }
     var sw = (wpLayout && wpLayout.sw) || window.innerWidth;
@@ -147,7 +123,7 @@
     stage.style.backgroundSize = sw + "px " + sh + "px";
     stage.style.backgroundPosition = (-ox) + "px " + (-oy) + "px";
     stage.style.backgroundRepeat = "no-repeat";
-    applyGlass();
+    pushWallpaperToIframe();
   }
 
   function applyDisplay(d) {
@@ -158,7 +134,6 @@
     var blur = (d.glassBlur != null) ? d.glassBlur : 18;
     document.documentElement.style.setProperty("--glass-blur", blur + "px");
     applyWallpaper();
-    applyParallax();
   }
 
   var currentCfg = null;
@@ -246,36 +221,24 @@
 
   // ---------- 鼠标视差 ----------
   // The host polls the cursor (the desktop icon layer eats the page's own mouse
-  // events) and pushes it here in per-mille.  The glass card lives in THIS page, so
-  // it moves here too; the panel itself lives in the iframe and gets relayed.
-  var PARALLAX_PX = 18;      // 面板随鼠标移动的最大位移（像素）
-  var paraX = 0, paraY = 0;
+  // events) and pushes it here in per-mille; we relay it into the iframe, where the
+  // panel turns it into both a translation and (with 3D on) a rotation.
   window.__htmlbgPointer = function (mx, my) {
-    paraX = mx / 1000;
-    paraY = my / 1000;
-    applyParallax();
     try {
-      var msg = { type: "pointer", x: paraX, y: paraY };
+      var msg = { type: "pointer", x: mx / 1000, y: my / 1000 };
       if (frame.contentWindow) frame.contentWindow.postMessage({ htmlbg: msg }, "*");
     } catch (e) {}
     return "ok";
   };
-
-  function applyParallax() {
-    var on = !!(currentCfg && currentCfg.preset && currentCfg.preset.parallax);
-    var dx = on ? (paraX * PARALLAX_PX) : 0;
-    var dy = on ? (paraY * PARALLAX_PX) : 0;
-    if (!glassEl) { ensureGlass(); }
-    if (glassEl) {
-      glassEl.style.transform = "translate3d(" + dx.toFixed(1) + "px," + dy.toFixed(1) + "px,0)";
-    }
-  }
 
   frame.addEventListener("load", function () {
     var out = pendingToIframe.splice(0);
     out.forEach(function (m) {
       try { frame.contentWindow.postMessage({ htmlbg: m }, "*"); } catch (e) {}
     });
+    // a fresh document lost the cached picture - send it again
+    wpSentUrl = "";
+    pushWallpaperToIframe();
   });
 
   // iframe -> host relay (preset pages ask for files, report option changes, …)

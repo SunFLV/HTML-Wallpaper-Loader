@@ -12,9 +12,11 @@
     -webkit-font-smoothing: antialiased;
   }
   body::before {
-    /* keeps text readable whatever the wallpaper behind is doing */
+    /* keeps text readable whatever the wallpaper behind is doing.
+       「只渲染面板」时窗口只比面板大一圈，这层压暗会溢出到面板外面变成一块
+       莫名其妙的矩形阴影，所以做成变量，让脚本在那种模式下关掉它。 */
     content: ""; position: fixed; inset: 0;
-    background: radial-gradient(1200px 700px at 20% 15%, rgba(0,0,0,.34), transparent 70%);
+    background: var(--veil, radial-gradient(1200px 700px at 20% 15%, rgba(0,0,0,.34), transparent 70%));
     pointer-events: none;
   }
 
@@ -45,6 +47,27 @@
   #dock.s-md { width: 38vw; height: 62vh; }
   #dock.s-lg { width: 48vw; height: 76vh; }
   #dock.s-xl { width: 62vw; height: 88vh; }
+
+  /* ---------------- frosted glass (drawn INSIDE the panel) ----------------
+     iframe 的文档根本身就是一个 backdrop root，所以面板上的 backdrop-filter 糊不到
+     父页面的壁纸 —— 必须自己画。而画在父页面里又会和面板错位（面板有视差位移和 3D
+     旋转，父页面那张卡片不会跟着走，于是露出一圈「多重阴影」）。
+     把它做成面板的**子元素**，位移和旋转都会连它一起带上，永远严丝合缝。 */
+  #glass {
+    position: absolute; inset: 0; z-index: 0; overflow: hidden;
+    border-radius: inherit; pointer-events: none; display: none;
+  }
+  /* 外扩一圈再模糊：模糊会把边缘的像素吸进来，不扩边会出现半透明的虚边 */
+  #glassImg {
+    position: absolute; left: -80px; top: -80px; right: -80px; bottom: -80px;
+    background-repeat: no-repeat;
+    filter: blur(var(--glass-blur, 18px)) saturate(140%);
+    will-change: background-position;
+  }
+  /* 面板的底色（默认毛玻璃渐变 / 用户填的颜色）画在模糊层之上 */
+  #glassTint { position: absolute; inset: 0; }
+  /* 内容压在玻璃之上 */
+  #dock > #count, #dock > #reader { position: relative; z-index: 1; }
 
   #dock.p-left-top    { left: 3vw;  top: 4vh; }
   #dock.p-center-top  { left: 50%;  top: 4vh; --dx: -50%; }
@@ -175,6 +198,8 @@
        accept=".docx,.doc,.pdf,.pptx,.ppt,.xlsx,.xlsm,.xls,.csv,.tsv,.txt,.md,.json,.xml,.png,.jpg,.jpeg,.gif,.webp,.mp4,.mp3">
 
 <div id="dock" class="p-right-center s-md">
+  <div id="glass" aria-hidden="true"><div id="glassImg"></div><div id="glassTint"></div></div>
+
   <div id="count">
     <div id="cdLabel">距离高考</div>
     <div id="cdDays">—<small>天</small></div>
@@ -254,9 +279,15 @@
     dock.style.height = only ? "auto" : "";
     dock.style.gap = only ? "0" : "";
     // 「面板背景色」：留空=默认毛玻璃；transparent=完全透明；rgba(...)/#hex 直接生效。
-    // 注意宿主「透明背景」按纯黑抠像，半透明 rgba 面板会显得偏暗（设置里有提示）。
+    // 玻璃层显示时底色由 #glassTint 负责，面板本体保持透明。
     var pc = String(P.panelColor || "").trim();
-    if (!pc) {
+    var glassOn = applyGlass();
+    if (glassOn) {
+      dock.style.backgroundImage = "none";
+      dock.style.backgroundColor = "transparent";
+      dock.style.backdropFilter = "none";
+      dock.style.webkitBackdropFilter = "none";
+    } else if (!pc) {
       dock.style.backgroundImage = DOCK_DEFAULT_BG;
       dock.style.backgroundColor = "transparent";
       dock.style.backdropFilter = "";
@@ -273,6 +304,11 @@
       dock.style.backdropFilter = "";
       dock.style.webkitBackdropFilter = "";
     }
+    // 「只渲染面板」时窗口只比面板大一圈，body 上那层压暗渐变会溢出到面板外，
+    // 变成一块莫名其妙的矩形阴影 —— 关掉它，暗部交给面板自己的 box-shadow。
+    if (P.fitPanel) { document.body.style.setProperty("--veil", "none"); }
+    else { document.body.style.removeProperty("--veil"); }
+
     inner.style.fontSize = (P.fontSize || 22) + "px";
     scroller.setPaused(!!P.paused);
     if (solo) {
@@ -286,31 +322,84 @@
   }
 
   // ------------------------------------------------------------- 3D / 视差 ----
-  // 3D：面板朝「屏幕内部」方向翻转 15° —— 靠右边的面板右边缘往里转，靠左边的左边缘往里转，
-  // 靠上/下的同理绕 X 轴。perspective 写在 CSS 的 transform 里。
+  // 3D：面板朝「屏幕中心 / 观看者」方向翻转 —— 靠右边的面板右边缘朝观看者转出来
+  // （像弧形排开的显示器那样把人包住），靠左边的相反；上/下同理绕 X 轴。
+  // perspective 写在 CSS 的 transform 里。
   var TILT_DEG = 15;
+  var TILT_FOLLOW = 10;      // 跟着鼠标额外转动的角度上限
+  var ptrX = 0, ptrY = 0;    // 宿主转发过来的鼠标位置（-1 .. 1）
   function applyTilt() {
     var dock = $("dock");
     var ry = 0, rx = 0;
     if (P.tilt3d) {
       var pos = String(P.pos || "right-center");
       var parts = pos.split("-");
-      if (parts[0] === "left") { ry = -TILT_DEG; }        // 左边缘转入屏幕
-      else if (parts[0] === "right") { ry = TILT_DEG; }   // 右边缘转入屏幕
-      if (parts[1] === "top") { rx = TILT_DEG; }          // 上边缘转入屏幕
-      else if (parts[1] === "bottom") { rx = -TILT_DEG; } // 下边缘转入屏幕
+      if (parts[0] === "left") { ry = TILT_DEG; }         // 面板朝屏幕中间转
+      else if (parts[0] === "right") { ry = -TILT_DEG; }
+      if (parts[1] === "top") { rx = -TILT_DEG; }
+      else if (parts[1] === "bottom") { rx = TILT_DEG; }
+      // 再跟着鼠标转：鼠标在哪边，面板就朝哪边「看」过去
+      ry += ptrX * TILT_FOLLOW;
+      rx -= ptrY * TILT_FOLLOW;
     }
-    dock.style.setProperty("--ry", ry + "deg");
-    dock.style.setProperty("--rx", rx + "deg");
+    dock.style.setProperty("--ry", ry.toFixed(2) + "deg");
+    dock.style.setProperty("--rx", rx.toFixed(2) + "deg");
   }
 
   // 鼠标视差：宿主轮询光标（桌面图标层吃掉了页面的鼠标事件），转发到这里
   var PARALLAX_PX = 18;
   function applyParallax(nx, ny) {
+    ptrX = nx || 0; ptrY = ny || 0;
     var dock = $("dock");
-    if (!P.parallax) { nx = 0; ny = 0; }
-    dock.style.setProperty("--px", (nx * PARALLAX_PX).toFixed(1) + "px");
-    dock.style.setProperty("--py", (ny * PARALLAX_PX).toFixed(1) + "px");
+    var mx = P.parallax ? ptrX : 0;
+    var my = P.parallax ? ptrY : 0;
+    dock.style.setProperty("--px", (mx * PARALLAX_PX).toFixed(1) + "px");
+    dock.style.setProperty("--py", (my * PARALLAX_PX).toFixed(1) + "px");
+    applyTilt();    // 3D 倾斜也跟着鼠标走
+    applyGlass();   // 玻璃后面的壁纸要反向补偿，否则会跟着面板一起漂
+  }
+
+  // -------------------------------------------------------------- 毛玻璃 -----
+  // 宿主把「系统当前壁纸」画在舞台上做背景，再把同一张图连同它在整屏里的位置转发进
+  // iframe；这里铺在面板底下 + 模糊 = 真毛玻璃。它是面板的子元素，所以位移/旋转同步。
+  var WP = { url: "", sw: 0, sh: 0, ox: 0, oy: 0, on: false, blur: 18 };
+  function onWallpaper(w) {
+    if (!w) return;
+    if (w.data) { WP.url = w.data; }
+    if (w.sw) { WP.sw = w.sw; }
+    if (w.sh) { WP.sh = w.sh; }
+    if (w.blur != null) { WP.blur = w.blur; }
+    WP.ox = w.ox || 0;
+    WP.oy = w.oy || 0;
+    WP.on = !!w.on;
+    applyGlass();
+  }
+
+  // 返回 true 表示玻璃层正在显示（此时面板本体必须保持透明）
+  function applyGlass() {
+    var glass = $("glass");
+    if (!glass) return false;
+    var pc = String(P.panelColor || "").trim();
+    var seeThrough = (pc === "transparent" || pc === "none");
+    if (!WP.on || !WP.url || seeThrough) { glass.style.display = "none"; return false; }
+
+    var dock = $("dock");
+    var img = $("glassImg");
+    // 模糊会把边缘外的像素吸进来，外扩至少 3 倍模糊半径，否则边缘会发虚
+    var bleed = Math.max(60, Math.ceil((WP.blur || 0) * 3));
+    glass.style.display = "";
+    img.style.left = img.style.top = img.style.right = img.style.bottom = (-bleed) + "px";
+    img.style.backgroundImage = 'url("' + WP.url + '")';
+    img.style.backgroundSize = WP.sw + "px " + WP.sh + "px";
+    // 面板在屏幕上（未变换前）的位置 = 窗口原点偏移 + 面板在页面里的位置，
+    // 再减掉当前视差位移做反向补偿，壁纸才能始终和真实桌面那一张对齐。
+    var px = parseFloat(dock.style.getPropertyValue("--px")) || 0;
+    var py = parseFloat(dock.style.getPropertyValue("--py")) || 0;
+    var sx = WP.ox + dock.offsetLeft + px;
+    var sy = WP.oy + dock.offsetTop + py;
+    img.style.backgroundPosition = (bleed - sx) + "px " + (bleed - sy) + "px";
+    $("glassTint").style.background = pc || DOCK_DEFAULT_BG;
+    return true;
   }
 
   function ask(kind, payload) {
@@ -515,11 +604,14 @@
       // 毛玻璃强度由宿主页面统一下发（iframe 里的 CSS 变量不会从父页面继承）
       if (m.glassBlur != null) {
         document.documentElement.style.setProperty("--glass-blur", m.glassBlur + "px");
+        WP.blur = m.glassBlur;
       }
       applyPreset(m.preset);
       setTimeout(syncFile, 80);
     } else if (m.type === "pointer") {
       applyParallax(m.x || 0, m.y || 0);
+    } else if (m.type === "wallpaper") {
+      onWallpaper(m.wallpaper);
     } else if (m.type === "file" && m.file) {
       putFile(m.file);
     }

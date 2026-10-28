@@ -210,8 +210,11 @@ if (Test-Path -LiteralPath $cfgPath) {
       if ($c0.preset -and $c0.preset.fitPanel) { $fit = $true }
       if ($c0.display -and $c0.display.transparent) { $fit = $true }
       $script:PanelFit = [bool]$fit
-      if ($c0.display -and $c0.display.useWallpaper) { $script:UseWallpaper = $true }
-      if ($c0.preset -and $c0.preset.parallax) { $script:Parallax = $true }
+      # 「只渲染面板」时窗口直接坐在桌面上，面板四周那一圈必须和真实壁纸一致，
+      # 否则会露出一块纯色矩形 —— 这种模式下无论如何都把系统壁纸取过来。
+      if (($c0.display -and $c0.display.useWallpaper) -or $script:PanelFit) { $script:UseWallpaper = $true }
+      # 3D 倾斜现在也跟着鼠标转，所以倾斜开着时同样需要光标轮询
+      if ($c0.preset -and ($c0.preset.parallax -or $c0.preset.tilt3d)) { $script:Parallax = $true }
     }
   } catch {}
 $script:CfgDirtyAt = $null
@@ -460,8 +463,10 @@ function Invoke-HostMessage {
       try {
         $c2 = $json | ConvertFrom-Json
         $wantWp = [bool]($c2.display -and $c2.display.useWallpaper)
+        # 「只渲染面板」时窗口坐在桌面上，四周一圈必须和真实壁纸一致，所以强制取壁纸
+        if ($script:PanelFit) { $wantWp = $true }
         $script:UseWallpaper = $wantWp
-        $script:Parallax = [bool]($c2.preset -and $c2.preset.parallax)
+        $script:Parallax = [bool]($c2.preset -and ($c2.preset.parallax -or $c2.preset.tilt3d))
         if ($wantWp) {
           if (-not $script:WallpaperImageSent) {
             if (Push-WallpaperImage) { $script:WallpaperImageSent = $true }
