@@ -1,4 +1,4 @@
-# package.ps1 - build the distributable zip for HTML Wallpaper Loader.
+﻿# package.ps1 - build the distributable zip for HTML Wallpaper Loader.
 #
 # The zip is what you hand to other machines. It must contain EVERYTHING needed to
 # run with zero install, including the bundled WebView2 runtime under runtime/, but

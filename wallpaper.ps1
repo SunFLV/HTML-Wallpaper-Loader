@@ -324,6 +324,29 @@ function Invoke-HostMessage {
       }
       Push-ScriptTo $Rec $ack
     }
+    'bindpath' {
+      # 用户在设置里手动填写/粘贴的文件路径 -> 解析、绑定、注入壁纸。
+      # 与 pickfile 同理，只是来源是键盘输入的路径而不是原生对话框选出来的。
+      try {
+        $raw = [Uri]::UnescapeDataString($Payload) | ConvertFrom-Json
+        $key = [string]$raw.key
+        $p   = [string]$raw.path
+      } catch { Push-ScriptTo $Rec $ack; return }
+      $abspath = Resolve-StoredPath -Path $p -BaseDir $script:BaseDir
+      if (-not $abspath -or -not (Test-Path -LiteralPath $abspath)) {
+        Push-ScriptTo $script:SettingsRec "try{window.__htmlbgSay('找不到文件：$p');}catch(e){}"
+        Push-ScriptTo $Rec $ack
+        return
+      }
+      $cfg = Set-BoundFile -Key $key -Path $abspath
+      if ($cfg) {
+        $script:CfgDirtyAt = Get-Date
+        Push-ScriptTo $script:WallpaperRec "try{window.__htmlbgApplyCfg && window.__htmlbgApplyCfg(decodeURIComponent('$([Uri]::EscapeDataString($cfg))'));}catch(e){}"
+        Write-Host ("file bound by path: '" + $key + "' -> " + $abspath)
+        Push-ScriptTo $script:SettingsRec "try{window.__htmlbgFilePicked && window.__htmlbgFilePicked(decodeURIComponent('$([Uri]::EscapeDataString((Convert-ToJsonString $key)))'),decodeURIComponent('$([Uri]::EscapeDataString((Convert-ToJsonString $abspath)))'));}catch(e){}"
+      }
+      Push-ScriptTo $Rec $ack
+    }
     'fileread' {
       # The bridge wants the bytes of whatever is bound to this slot.  Hand them over
       # directly - the page has no way to read local files on its own.

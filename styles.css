@@ -375,24 +375,19 @@ input[type="range"] {
 .chip:hover { border-color: var(--accent); }
 .chip.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
 
-/* ---------- 文件导入槽 ---------- */
-.slot-list { display: grid; gap: 8px; margin: 10px 0 12px; }
+/* ---------- 文件导入槽（与「选择本地 HTML 文件」同款表单） ---------- */
+.slot-list { display: grid; gap: 14px; margin: 10px 0 12px; }
 .slot-item {
-  display: flex; align-items: center; gap: 10px;
-  padding: 10px 12px; border-radius: var(--radius-sm);
+  padding: 14px; border-radius: var(--radius-sm);
   border: 1px solid var(--field-border); background: var(--field-bg);
 }
-.slot-info { flex: 1 1 auto; min-width: 0; }
-.slot-name { font-size: 13px; font-weight: 700; }
-.slot-path {
-  font-size: 11px; color: var(--muted); margin-top: 3px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.slot-state { flex: 0 0 auto; font-size: 11px; color: var(--muted); max-width: 96px; text-align: right; }
+.slot-item > label { margin-top: 0; }
+.slot-item .slot-file-wrap { margin: 2px 0 2px; }
+.slot-item .slot-choose { margin-top: 4px; }
+.slot-item .slot-path-input { margin-top: 4px; }
+.slot-state { font-size: 11px; color: var(--muted); margin-top: 8px; }
 .slot-state.ok { color: #4ade80; }
 .slot-state.bad { color: #ff6b6b; }
-.slot-actions { flex: 0 0 auto; display: flex; gap: 6px; }
-.btn.tiny { padding: 4px 9px; font-size: 11px; margin-top: 0; width: auto; }
 
 .panel-foot {
   display: flex;

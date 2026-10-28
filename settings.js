@@ -189,59 +189,100 @@
       return;
     }
     detectedSlots.forEach(function (s) {
+      var slotKey = s.key;
+      var bound = state.files && state.files[slotKey];
+      var boundPath = (bound && typeof bound === "string") ? bound : "";
       var row = document.createElement("div");
       row.className = "slot-item";
-      row.setAttribute("data-key", s.key);
+      row.setAttribute("data-key", slotKey);
 
-      var info = document.createElement("div");
-      info.className = "slot-info";
-      var nm = document.createElement("div");
-      nm.className = "slot-name";
-      nm.textContent = s.label || s.key;
-      var path = document.createElement("div");
-      path.className = "slot-path";
-      path.textContent = (state.files && state.files[s.key]) || "未绑定文件";
-      info.appendChild(nm);
-      info.appendChild(path);
+      // 1) 选择文件 —— 与「选择本地 HTML 文件」同款：文件选择器 + 路径输入框 + 按钮
+      var lbl = document.createElement("label");
+      lbl.textContent = "选择 " + (s.label || slotKey) + " 文件";
+      row.appendChild(lbl);
 
-      var acts = document.createElement("div");
-      acts.className = "slot-actions";
-      var pick = document.createElement("button");
-      pick.className = "btn tiny";
-      pick.textContent = "选择文件";
-      pick.addEventListener("click", function () {
-        if (window.__htmlbgHasHost) {
-          hostSend("pickfile", s.key);
+      var fileWrap = document.createElement("div");
+      fileWrap.className = "slot-file-wrap";
+      if (window.__htmlbgHasHost) {
+        // 真实运行时：用宿主原生对话框选文件（桌面壁纸不可点击，也没法直接取路径）
+        var choose = document.createElement("button");
+        choose.className = "btn slot-choose";
+        choose.textContent = "选择文件";
+        choose.addEventListener("click", function () {
+          hostSend("pickfile", slotKey);
           window.__htmlbgSay("在弹出的对话框里选择文件…");
-        } else {
-          var v = window.prompt("输入文件的完整路径（浏览器预览不支持原生对话框）", path.textContent === "未绑定文件" ? "" : path.textContent);
-          if (v !== null) {
+        });
+        fileWrap.appendChild(choose);
+      } else {
+        // 浏览器预览：直接用页面里的文件选择器
+        var finput = document.createElement("input");
+        finput.type = "file";
+        finput.accept = s.accept || "";
+        finput.addEventListener("change", function (e) {
+          var f = e.target.files && e.target.files[0];
+          if (!f) return;
+          var reader = new FileReader();
+          reader.onload = function () {
             state.files = state.files || {};
-            if (v.trim()) state.files[s.key] = v.trim(); else delete state.files[s.key];
+            state.files[slotKey] = { name: f.name, dataUrl: reader.result };
             save();
             renderFileSlots();
-          }
+          };
+          reader.readAsDataURL(f);
+        });
+        fileWrap.appendChild(finput);
+      }
+      row.appendChild(fileWrap);
+
+      // 2) 或填写文件路径（与 HTML 来源里的「或填写文件路径」一致）
+      var lbl2 = document.createElement("label");
+      lbl2.textContent = "或填写文件路径";
+      row.appendChild(lbl2);
+
+      var path = document.createElement("input");
+      path.type = "text";
+      path.className = "slot-path-input";
+      path.placeholder = "相对或绝对路径，例如 C:\\Users\\me\\简历.pdf";
+      path.value = boundPath;
+      row.appendChild(path);
+
+      // 3) 绑定文件 / 清除
+      var acts = document.createElement("div");
+      acts.className = "config-actions";
+      var bind = document.createElement("button");
+      bind.className = "btn slot-bind";
+      bind.textContent = "绑定文件";
+      bind.addEventListener("click", function () {
+        var v = path.value.trim();
+        if (!v) { window.__htmlbgSay("请先选择文件或填写路径"); return; }
+        if (window.__htmlbgHasHost) {
+          hostSend("bindpath", JSON.stringify({ key: slotKey, path: v }));
+          window.__htmlbgSay("正在绑定：" + v.replace(/^.*[\\\/]/, ""));
+        } else {
+          state.files = state.files || {};
+          state.files[slotKey] = v;
+          save();
+          renderFileSlots();
         }
       });
       var clear = document.createElement("button");
-      clear.className = "btn tiny ghost";
+      clear.className = "btn ghost slot-clear";
       clear.textContent = "清除";
       clear.addEventListener("click", function () {
-        if (state.files) delete state.files[s.key];
-        if (window.__htmlbgHasHost) hostSend("unbindfile", s.key);
-        save();
-        renderFileSlots();
+        if (state.files) delete state.files[slotKey];
+        if (window.__htmlbgHasHost) hostSend("unbindfile", slotKey);
+        else { save(); renderFileSlots(); }
       });
-      acts.appendChild(pick);
+      acts.appendChild(bind);
       acts.appendChild(clear);
+      row.appendChild(acts);
 
+      // 状态行
       var st = document.createElement("div");
       st.className = "slot-state";
-      st.textContent = (state.files && state.files[s.key]) ? "已绑定" : "";
-
-      row.appendChild(info);
+      st.textContent = bound ? "已绑定" : "";
       row.appendChild(st);
-      row.appendChild(acts);
+
       box.appendChild(row);
     });
   }

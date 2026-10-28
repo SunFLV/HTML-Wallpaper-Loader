@@ -125,12 +125,15 @@
   #doc { display: block; }
 
   /* On the desktop the page cannot be clicked, so the input is a pure sink: the host
-     writes the File into it.  Solo (opened on its own in a browser) shows it. */
-  #doc {
+     writes the File into it.  Solo (opened on its own in a browser) shows it.
+     The off-screen sink rules target #docInput (the <input>); the reader <div> keeps
+     its own position:relative sizing from the #doc rule above. DO NOT give the two
+     the same id (that was a bug: the sink CSS hid the whole reader). */
+  #docInput {
     position: fixed; left: -200px; top: -200px; width: 1px; height: 1px;
     opacity: 0; pointer-events: none;
   }
-  body.solo #doc {
+  body.solo #docInput {
     position: static; opacity: 1; pointer-events: auto;
     width: auto; height: auto; left: auto; top: auto;
   }
@@ -139,8 +142,10 @@
 <body>
 
 <!-- The document slot.  The desktop version cannot be clicked, so the file is bound
-     in the SETTINGS window; the host drops it into this input as a real File. -->
-<input type="file" id="doc" data-htmlbg-key="doc" data-htmlbg-label="预览文档"
+     in the SETTINGS window; the host drops it into this input as a real File.
+     NOTE: its id is "docInput" - the reader <div> below also used to be id="doc",
+     which made the off-screen-sink CSS clobber the visible reading area. -->
+<input type="file" id="docInput" data-htmlbg-key="doc" data-htmlbg-label="预览文档"
        accept=".docx,.doc,.pdf,.pptx,.ppt,.xlsx,.xlsm,.xls,.csv,.tsv,.txt,.md,.json,.xml,.png,.jpg,.jpeg,.gif,.webp,.mp4,.mp3">
 
 <div id="dock" class="p-right-center s-md">
@@ -195,7 +200,7 @@
   var P = Object.assign({}, DEFAULTS);
   var LOCAL_KEY = "htmlbg-preset-exam-dock-v1";
 
-  var input = $("doc");
+  var input = $("docInput");
   var inner = $("docInner");
   var box = $("doc");
 
@@ -360,7 +365,9 @@
   function loadFile(file) {
     if (!file) return;
     reportDoc(true, file.name, file.size, "", "loadstart");
-    $("docMeta").textContent = "读取中…";
+    $("docName").textContent = file.name || "文档";
+    $("docMeta").textContent = "解析中…";
+    setHint("正在解析文档，请稍候…");
     try {
       if (!window.HTMLBGDocs) throw new Error("docs.js 未加载");
       window.HTMLBGDocs.read(file).then(function (doc) {
