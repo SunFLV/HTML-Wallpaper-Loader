@@ -108,19 +108,26 @@ $script:VendorDir  = Join-Path $ScriptDir 'vendor'
 
 $engine = Initialize-BrowserEngine -VendorDir $script:VendorDir `
                                   -UserDataDir $script:ProfileDir `
-                                  -Preferred $Browser
+                                  -Preferred $Browser `
+                                  -ScriptRoot $ScriptDir
 if (-not $engine) {
   Write-Error 'No usable rendering engine found. Need the WebView2 runtime (standard on Windows 10/11), the built-in IE engine, or Edge/Chrome. You can also pass -Browser "C:\path\to\chrome.exe".'
   exit 1
 }
 $script:Engine = $engine
 Write-Host "Engine  : $engine"
-if ($engine -eq 'webview2') { Write-Host "Runtime : $(Find-WebView2Runtime)" }
+if ($engine -eq 'webview2') { Write-Host "Runtime : $($script:RuntimeSource) $(Find-WebView2Runtime -LocalRoot $ScriptDir)" }
 if ($engine -eq 'edge')     { Write-Host "Browser : $(Find-BrowserPath $Browser)" }
 if ($BC.LastError)          { Write-Host "Note    : $($BC.LastError)" }
 
 $vs = Get-VirtualScreen
-$wallpaperUrl = Convert-FileUrl (Join-Path $ScriptDir 'wallpaper.html')
+# The preset pages use modern HTML/CSS/JS that the IE/Trident fallback cannot render,
+# so if we ever fall back to it we show a clear notice instead of a broken black wall.
+if ($engine -eq 'webview2') {
+  $wallpaperUrl = Convert-FileUrl (Join-Path $ScriptDir 'wallpaper.html')
+} else {
+  $wallpaperUrl = Convert-FileUrl (Join-Path $ScriptDir 'noengine.html')
+}
 Write-Host "Wallpaper: $wallpaperUrl"
 
 # ------------------------------------------------------------ desktop targets
@@ -456,6 +463,15 @@ $script:Notify.add_MouseClick({
   if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) { Open-SettingsWindow }
 })
 $script:Notify.Visible = $true
+
+# Tell the user what happened with the engine.  A first-run auto-download is worth a
+# confirmation; a genuine missing-runtime situation needs a warning so they are not
+# left staring at a black desktop wondering why.
+if ($BC.JustDownloaded) {
+  $script:Notify.ShowBalloonTip(4000, 'HTML 壁纸', '首次运行已自动下载 WebView2 运行时，现已可离线使用。', [System.Windows.Forms.ToolTipIcon]::Info)
+} elseif ($engine -ne 'webview2') {
+  $script:Notify.ShowBalloonTip(6000, 'HTML 壁纸', '未能加载 WebView2 运行时，已退回兼容模式（预设页面可能显示异常）。请联网后重启本工具，或手动安装 WebView2 运行时。', [System.Windows.Forms.ToolTipIcon]::Warning)
+}
 
 # ------------------------------------------------------------- the one pump
 # A single WinForms timer drives everything: the browser state machine, the tray

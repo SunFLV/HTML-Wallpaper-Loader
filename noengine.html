@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>HTML 壁纸 - 需要 WebView2</title>
+  <style>
+    html, body { height: 100%; margin: 0; }
+    body {
+      background: #0a0a12;
+      color: #e8e8f0;
+      font-family: "Microsoft YaHei", "Segoe UI", Tahoma, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .card {
+      max-width: 560px;
+      margin: 24px;
+      padding: 28px 32px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(124,92,255,0.35);
+      border-radius: 14px;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+    }
+    h1 { font-size: 20px; margin: 0 0 12px; color: #b9a6ff; }
+    p  { font-size: 14px; line-height: 1.7; margin: 10px 0; color: #c8c8d8; }
+    .step { color: #ffffff; }
+    code {
+      background: rgba(124,92,255,0.18);
+      padding: 1px 6px;
+      border-radius: 4px;
+      color: #d8ccff;
+    }
+    .hint { margin-top: 18px; font-size: 12px; color: #8a8aa0; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>壁纸引擎需要 WebView2 运行时</h1>
+    <p>这台电脑上没有可用的 <b>WebView2 运行时</b>（早期 Windows 10 默认没有预装）。本工具已尝试在首次运行时自动下载，但未能成功（通常是当前处于离线状态）。</p>
+    <p class="step">解决方法（任选其一）：</p>
+    <p>1. <span class="step">连接网络后重新启动本工具</span>，它会自动下载并缓存运行时，之后即可离线使用。</p>
+    <p>2. 手动安装 WebView2 运行时：访问 <code>https://developer.microsoft.com/microsoft-edge/webview2/</code> 下载“常青独立安装程序”并运行。</p>
+    <p>3. 安装 / 更新 Microsoft Edge（Chromium 版），它会一并提供 WebView2 运行时。</p>
+    <p class="hint">说明：预设页面使用了现代网页技术，必须依赖 Chromium（WebView2）内核，系统自带的 IE 内核无法正确渲染，因此这里显示提示而不是黑屏。</p>
+  </div>
+</body>
+</html>

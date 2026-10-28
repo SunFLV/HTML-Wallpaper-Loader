@@ -1,4 +1,4 @@
-# browsercore.ps1 - the built-in mini browser for the HTML wallpaper loader.
+﻿# browsercore.ps1 - the built-in mini browser for the HTML wallpaper loader.
 #
 # WHY THIS EXISTS
 # The first versions launched Edge/Chrome with --app=... and then reparented that
@@ -58,9 +58,34 @@ function Resolve-ProgramRoot {
   return [string]($c | Select-Object -First 1)
 }
 
+function Find-LocalRuntimeFolder {
+  # A fixed-version WebView2 runtime bundled next to the script (offline, zero-install).
+  # The folder may contain msedgewebview2.exe directly, or nested one level (some
+  # packaging layouts drop it under a subfolder).  Returns the folder that actually
+  # holds the exe, or $null.
+  param([string]$Base)
+  if (-not $Base -or -not (Test-Path -LiteralPath $Base)) { return $null }
+  if (Test-Path (Join-Path $Base 'msedgewebview2.exe')) { return $Base }
+  $hit = Get-ChildItem -Path $Base -Recurse -Filter 'msedgewebview2.exe' -ErrorAction SilentlyContinue |
+         Select-Object -First 1
+  if ($hit) { return $hit.DirectoryName }
+  return $null
+}
+
 function Find-WebView2Runtime {
-  # The runtime registers itself under a GUID key; the files live in
-  # %ProgramFiles(x86)%\Microsoft\EdgeWebView\Application\<version>\.
+  param([string]$LocalRoot = '')
+  # 0) Prefer a runtime we shipped with the tool.  This is what makes it work on
+  #    early Windows 10 that never got the Chromium Edge / WebView2 runtime pushed
+  #    to it: we carry our own, so "zero install" is real on every build.
+  if ($LocalRoot) {
+    $localRt = Find-LocalRuntimeFolder -Base (Join-Path $LocalRoot 'runtime')
+    if ($localRt) {
+      $script:RuntimeSource = 'bundled'
+      return $localRt
+    }
+  }
+  # 1) system WebView2 runtime (Evergreen), registered under a GUID key; the files
+  #    live in %ProgramFiles(x86)%\Microsoft\EdgeWebView\Application\<version>\.
   $guid = '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
   $roots = @((Join-Path (Resolve-ProgramRoot -X86) 'Microsoft\EdgeWebView\Application'),
              (Join-Path (Resolve-ProgramRoot) 'Microsoft\EdgeWebView\Application'))
@@ -72,7 +97,7 @@ function Find-WebView2Runtime {
       if ($pv) {
         foreach ($r in $roots) {
           $dir = Join-Path $r $pv
-          if (Test-Path (Join-Path $dir 'msedgewebview2.exe')) { return $dir }
+          if (Test-Path (Join-Path $dir 'msedgewebview2.exe')) { $script:RuntimeSource = 'system'; return $dir }
         }
       }
     } catch {}
@@ -82,17 +107,72 @@ function Find-WebView2Runtime {
     $v = Get-ChildItem $r -Directory -ErrorAction SilentlyContinue |
          Where-Object { Test-Path (Join-Path $_.FullName 'msedgewebview2.exe') } |
          Sort-Object Name -Descending | Select-Object -First 1
-    if ($v) { return $v.FullName }
+    if ($v) { $script:RuntimeSource = 'system'; return $v.FullName }
   }
   return $null
 }
 
+# First-run self-heal: if neither a bundled nor a system runtime exists, download the
+# fixed-version WebView2 runtime (one-time) into <LocalRoot>\runtime so the tool still
+# works offline afterwards.  Returns the runtime folder or $null (offline / blocked).
+$script:WebView2RuntimeVersion = '156.0.4314.50'
+function Install-WebView2Runtime {
+  param([string]$LocalRoot)
+  $dest = Join-Path $LocalRoot 'runtime'
+  if (-not (Test-Path -LiteralPath $dest)) { New-Item -ItemType Directory -Path $dest -Force | Out-Null }
+  $ver  = $script:WebView2RuntimeVersion
+  $pkg  = Join-Path $env:TEMP ('webview2-runtime-' + $ver + '.nupkg')
+  # nuget.org is the canonical host; the azure.cn mirror is friendlier on some
+  # networks.  Try both so a geo-block on one does not break first-run setup.
+  $urls = @(
+    "https://www.nuget.org/api/v2/package/WebView2.Runtime.X64/$ver",
+    "https://nuget.azure.cn/v3-flatcontainer/webview2.runtime.x64/$ver/webview2.runtime.x64.$ver.nupkg"
+  )
+  $got = $false
+  foreach ($u in $urls) {
+    try {
+      Write-Host "first run: downloading WebView2 runtime $ver ($(if($u -match 'azure'){'mirror'}else{'nuget'}))..."
+      $wc = New-Object System.Net.WebClient
+      $wc.Headers.Add('User-Agent', 'HTMLBG-Wallpaper')
+      $wc.DownloadFile($u, $pkg)
+      if ((Test-Path -LiteralPath $pkg) -and ((Get-Item $pkg).Length -gt 1MB)) { $got = $true; break }
+    } catch {
+      Write-Host "  download from $u failed: $($_.Exception.Message)"
+    }
+  }
+  if (-not $got) { return $null }
+  try {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip  = [System.IO.Compression.ZipFile]::OpenRead($pkg)
+    $base = 'contentFiles/any/any/WebView2/'
+    foreach ($e in $zip.Entries) {
+      if ($e.FullName -like ($base + '*') -and $e.Name) {
+        $rel    = $e.FullName.Substring($base.Length)
+        $target = Join-Path $dest $rel
+        $tdir   = Split-Path -Parent $target
+        if (-not (Test-Path -LiteralPath $tdir)) { New-Item -ItemType Directory -Path $tdir -Force | Out-Null }
+        [System.IO.Compression.ZipFileExtensions]::ExtractToFile($e, $target, $true)
+      }
+    }
+    $zip.Dispose()
+    Remove-Item -LiteralPath $pkg -Force -ErrorAction SilentlyContinue
+    $folder = Find-LocalRuntimeFolder -Base $dest
+    if ($folder) { $script:RuntimeSource = 'downloaded' }
+    return $folder
+  } catch {
+    Write-Host "WebView2 runtime extraction failed: $($_.Exception.Message)"
+    return $null
+  }
+}
+
 function Initialize-BrowserEngine {
-  param([string]$VendorDir, [string]$UserDataDir, [string]$Preferred)
+  param([string]$VendorDir, [string]$UserDataDir, [string]$Preferred, [string]$ScriptRoot = '')
 
   $BC.VendorDir = $VendorDir
   $BC.UserData  = $UserDataDir
+  $BC.JustDownloaded = $false
   if (-not (Test-Path $UserDataDir)) { New-Item -ItemType Directory -Path $UserDataDir -Force | Out-Null }
+  $root = if ($ScriptRoot) { $ScriptRoot } else { Split-Path -Parent $VendorDir }
 
   # ---- 1) WebView2 -------------------------------------------------------------
   $core = Join-Path $VendorDir 'Microsoft.Web.WebView2.Core.dll'
@@ -107,7 +187,13 @@ function Initialize-BrowserEngine {
       Add-Type -AssemblyName System.Drawing
       Add-Type -Path $core
       Add-Type -Path $wf
-      $rt = Find-WebView2Runtime
+      # Prefer a bundled / system runtime; if none exists yet, try a one-time
+      # download so a clean machine still works without any manual install.
+      $rt = Find-WebView2Runtime -LocalRoot $root
+      if (-not $rt) {
+        $rt = Install-WebView2Runtime -LocalRoot $root
+        if ($rt) { $BC.JustDownloaded = $true }
+      }
       if ($rt) {
         # Point the loader at the runtime we found.  Also set it in the environment
         # so the child msedgewebview2.exe process picks it up.
@@ -117,7 +203,7 @@ function Initialize-BrowserEngine {
         $BC.Engine = 'webview2'
         return 'webview2'
       }
-      $BC.LastError = ('WebView2 SDK loaded but no runtime under ' + ($roots -join ' / '))
+      $BC.LastError = 'WebView2 SDK loaded but no runtime found (and auto-download failed - check internet)'
     } catch {
       $BC.LastError = "WebView2 init failed: $($_.Exception.Message)"
     }

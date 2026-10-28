@@ -2,6 +2,10 @@
 githubpusher/credential.txt
 githubpusher/mingit/
 
+# bundled WebView2 runtime (shipped inside the zip, NOT committed - keeps the repo
+# small and under GitHub's 100MB file limit; re-created by package.ps1)
+runtime/
+
 # generated at runtime by wallpaper.ps1 from config.json
 config-inject.js
 
@@ -11,3 +15,5 @@ diag.txt
 shot.png
 verify_*.png
 frame_probe.png
+*.nupkg
+*.bundle

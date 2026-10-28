@@ -1,4 +1,4 @@
-# HTML 壁纸加载器（零安装桌面版）
+﻿# HTML 壁纸加载器（零安装桌面版）
 
 把任意网页 / 本地 HTML 文件 / HTML 代码渲染成 **真正的 Windows 桌面**，且**桌面图标与操作层停留在壁纸之上**。
 
@@ -84,9 +84,11 @@ Windows 桌面窗口层级因系统版本而异，没有「一种写法通吃」
 
 | 引擎 | 说明 |
 | --- | --- |
-| `webview2` | **首选。** 系统自带 Microsoft Edge WebView2 运行时（Chromium 引擎）+ `vendor\` 里两个托管 DLL。通过注册表 GUID `{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}` 与 `%ProgramFiles (x86)%\Microsoft\EdgeWebView\Application\<版本>\` 定位运行时 |
+| `webview2` | **首选。** 按以下顺序定位 Chromium 运行时：① 程序自带的 `runtime\` 固定版运行时（随压缩包分发，**离线零安装**，对早期 Win10 尤其重要）；② 系统自带的 Microsoft Edge WebView2 运行时（注册表 GUID `{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}` + `%ProgramFiles (x86)%\Microsoft\EdgeWebView\Application\<版本>\`）；③ 若两者都缺失，首次运行会联网自动下载并缓存到 `runtime\`，之后即可离线使用 |
 | `ie` | `System.Windows.Forms.WebBrowser`（IE/Trident），每台 Windows 都有，作为次选 |
 | `edge` | 兜底：`msedge --app` 起外部窗口并重父化（会有上面说的 7px 边框） |
+
+> **早期 Windows 10 的坑**：老版本 Win10（没有推送 Chromium Edge / WebView2 运行时）上，工具会默默退回 IE 引擎，而预设页用了现代网页技术，IE 渲染不了，于是表现为"报脚本错误 + 壁纸全黑"。解决：压缩包里已自带 `runtime\` 固定版运行时，开箱即用；万一缺失，首次运行也会自动下载。若彻底离线且下载失败，会显示一个明确的提示页（`noengine.html`）而不是黑屏。
 
 `vendor\` 三个文件来自 NuGet 包 `Microsoft.Web.WebView2`（1.0.4314.35）：`Microsoft.Web.WebView2.Core.dll`、`Microsoft.Web.WebView2.WinForms.dll`、`WebView2Loader.dll`（原生加载器，必须让 `vendor\` 排在 `PATH` 最前）。
 
