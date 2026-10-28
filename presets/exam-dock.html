@@ -33,12 +33,17 @@
     box-shadow: 0 24px 70px rgba(0,0,0,.42), inset 0 1px 0 rgba(255,255,255,.10);
     backdrop-filter: blur(var(--glass-blur, 18px)) saturate(140%);
     -webkit-backdrop-filter: blur(var(--glass-blur, 18px)) saturate(140%);
-    /* 3D 倾斜 / 鼠标视差 / 居中位移 —— 全部合成到一条 transform 上：
-       --dx/--dy 是 p-* 的居中位移，--px/--py 是鼠标视差，--ry/--rx 是 3D 倾斜 */
-    --dx: 0px; --dy: 0px; --px: 0px; --py: 0px; --ry: 0deg; --rx: 0deg;
+    /* 3D 倾斜 / 鼠标视差 —— 合成到一条 transform 上：
+       --px/--py 鼠标视差，--ry/--rx 3D 倾斜。
+       顺序是硬要求：位移必须写在 perspective **之前**（矩阵里更靠外）。这样它是在
+       透视除法之后才加到齐次坐标上的「屏幕空间平移」，近边远边位移量一致；
+       反过来写的话，同一个位移会被 (1 - z/d) 按深度缩放 —— 近边放大、远边缩小，
+       面板一转就被拉歪（全屏模式下居中用的 translate(-50%) 就是这个坑，
+       只有「只渲染面板」模式因为居中位移为 0 才躲过去）。 */
+    --px: 0px; --py: 0px; --ry: 0deg; --rx: 0deg;
     --persp: 1400px; --fitm: 48px;
-    transform: perspective(var(--persp)) translate(var(--dx), var(--dy))
-               translate3d(var(--px), var(--py), 0)
+    transform: translate3d(var(--px), var(--py), 0)
+               perspective(var(--persp))
                rotateY(var(--ry)) rotateX(var(--rx));
     transition: transform .22s ease-out;
   }
@@ -69,14 +74,17 @@
   /* 内容压在玻璃之上 */
   #dock > #count, #dock > #reader { position: relative; z-index: 1; }
 
+  /* 居中一律用 margin:auto，不再用 transform: translate(-50%)：后者会落在
+     perspective 之前（矩阵更靠内），被透视除法按深度缩放，面板一转就变形。
+     （固定定位元素四边都给值 + 尺寸确定 + margin auto = 居中，标准做法。） */
   #dock.p-left-top    { left: 3vw;  top: 4vh; }
-  #dock.p-center-top  { left: 50%;  top: 4vh; --dx: -50%; }
+  #dock.p-center-top  { left: 0; right: 0; margin-left: auto; margin-right: auto; top: 4vh; }
   #dock.p-right-top   { right: 3vw; top: 4vh; }
-  #dock.p-left-center { left: 3vw;  top: 50%; --dy: -50%; }
-  #dock.p-center      { left: 50%;  top: 50%; --dx: -50%; --dy: -50%; }
-  #dock.p-right-center{ right: 3vw; top: 50%; --dy: -50%; }
+  #dock.p-left-center { left: 3vw;  top: 0; bottom: 0; margin-top: auto; margin-bottom: auto; }
+  #dock.p-center      { left: 0; right: 0; top: 0; bottom: 0; margin: auto; }
+  #dock.p-right-center{ right: 3vw; top: 0; bottom: 0; margin-top: auto; margin-bottom: auto; }
   #dock.p-left-bottom { left: 3vw;  bottom: 5vh; }
-  #dock.p-center-bottom{ left: 50%; bottom: 5vh; --dx: -50%; }
+  #dock.p-center-bottom{ left: 0; right: 0; margin-left: auto; margin-right: auto; bottom: 5vh; }
   #dock.p-right-bottom{ right: 3vw; bottom: 5vh; }
 
   /* 「只渲染面板」模式：宿主把窗口裁成面板大小，面板直接铺满整块窗口。
@@ -84,8 +92,8 @@
   #dock.fit {
     left: 0 !important; right: 0 !important; top: 0 !important; bottom: 0 !important;
     width: auto !important; height: auto !important;
-    /* 铺满窗口时不需要居中位移，但 3D 倾斜 / 视差仍要保留 */
-    --dx: 0px; --dy: 0px;
+    /* 四边都给了值 + 尺寸 auto，margin auto 会归零并撑满 —— 不需要额外处理 */
+    margin: 0 !important;
     border-radius: 0;
   }
   /* 开了 3D 倾斜或视差后，宿主把窗口做得比面板大一圈（给旋转/位移留地方），
@@ -387,7 +395,8 @@
     var img = $("glassImg");
     // 模糊会把边缘外的像素吸进来，外扩至少 3 倍模糊半径，否则边缘会发虚
     var bleed = Math.max(60, Math.ceil((WP.blur || 0) * 3));
-    glass.style.display = "";
+    // 必须是 "block"：写 "" 会退回样式表里的 #glass { display:none }，玻璃就永远不出现
+    glass.style.display = "block";
     img.style.left = img.style.top = img.style.right = img.style.bottom = (-bleed) + "px";
     img.style.backgroundImage = 'url("' + WP.url + '")';
     img.style.backgroundSize = WP.sw + "px " + WP.sh + "px";

@@ -336,7 +336,10 @@ function Apply-PanelFit {
 # proper frosted glass, instead of blurring a flat colour.  (Just leaving the
 # desktop visible outside a clipped window cannot do that: backdrop-filter can only
 # blur what is painted behind the panel *inside our own page*.)
-$script:UseWallpaper        = $false
+# 注意：这几个标志在文件靠前的「启动时读 config.json」那段里可能已经被设成 $true，
+# 这里必须判空再赋默认值，否则会把启动配置抹掉 —— 表现为「开机后毛玻璃没了、
+# 视差也不动，打开一次设置窗口才恢复」。
+if ($null -eq $script:UseWallpaper) { $script:UseWallpaper = $false }
 $script:WallpaperImageSent  = $false
 $script:WallpaperSentPath   = ''
 $script:WallpaperFails      = 0
@@ -346,7 +349,7 @@ $script:WallpaperFails      = 0
 # so the page cannot listen for mousemove itself.  We poll the cursor position and
 # push it into the page as per-mille integers (no decimal separator -> immune to
 # locale), and the CSS transition in the page smooths the ~60 ms steps out.
-$script:Parallax = $false
+if ($null -eq $script:Parallax) { $script:Parallax = $false }
 $script:PointerTimer = New-Object System.Windows.Forms.Timer
 $script:PointerTimer.Interval = 60
 $script:PointerTimer.add_Tick({
