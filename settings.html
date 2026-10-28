@@ -47,11 +47,21 @@
             <p class="hint">提示：部分网站设置了禁止嵌入（X-Frame-Options），将无法作为壁纸显示。</p>
           </div>
           <div class="pane" data-pane="file">
-            <label>选择本地 HTML 文件</label>
-            <div id="htmlPickWrap"></div>
-            <label>或填写文件路径</label>
-            <input id="filePath" type="text" placeholder="相对或绝对路径，例如 wallpaper.html" spellcheck="false" />
-            <button id="loadFile" class="btn">加载文件</button>
+            <div class="slot-item">
+              <label>选择本地 HTML 文件</label>
+              <div id="htmlPickWrap" class="slot-file-wrap"></div>
+              <label>或填写文件路径</label>
+              <input id="filePath" type="text" class="slot-path-input" placeholder="相对或绝对路径，例如 wallpaper.html" spellcheck="false" />
+              <div class="config-actions">
+                <button id="loadFile" class="btn">加载文件</button>
+                <button id="clearFile" class="btn ghost">清除</button>
+              </div>
+              <div class="slot-state" id="fileState"></div>
+            </div>
+            <p class="hint">
+              和「文件导入」里的每个槽位完全一样：点「选择文件」用系统对话框挑文件，
+              选完自动填进路径框并立即加载；也可以直接填路径（相对路径以程序目录为基准）再点「加载文件」。
+            </p>
           </div>
           <div class="pane" data-pane="code">
             <label>HTML 代码</label>

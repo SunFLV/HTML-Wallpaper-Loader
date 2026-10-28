@@ -72,6 +72,7 @@
     if (ipc) ipc.send("save-config", serialize(state));
     else { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(serialize(state))); } catch (e) {} }
     reportToHost();
+    try { setFileState(); } catch (e) {}
   }
 
   // ---------- 与宿主（wallpaper.ps1）通信 ----------
@@ -90,18 +91,29 @@
     try { hostSend("cfg", JSON.stringify(serialize(state))); } catch (e) {}
   }
 
-  // 宿主确认存在。必须在设置标志后立即重绘文件槽：renderFileSlots() 在 build()
-  // 里先跑过一次，那时 __htmlbgHasHost 还是 false，槽位会被画成浏览器分支的
-  // <input type=file>（宿主拿不到那种选择结果），导致「选择文件」按钮不出现。
-  // 宿主每次推送都会重申一次，所以只在标志真正翻转时重绘，免得拖滑块时反复重建 DOM。
+  // 宿主确认存在。宿主每次推送都会重申一次，所以只在标志真正翻转时重绘，
+  // 免得拖滑块时反复重建 DOM。
+  //
+  // 光靠这个回调还不够：宿主注入的脚本可能在 settings.js 执行「之前」就把
+  // __htmlbgHasHost 置成了 true（那时 __htmlbgHostReady 还没定义，`&&` 短路，
+  // 回调压根没跑），随后本文件又把标志重置回 false —— 于是「选择文件」按钮
+  // 永远停在浏览器分支。所以下面另有一个 400ms 的巡检做兜底。
   window.__htmlbgHostReady = function () {
-    if (!window.__htmlbgHasHost) {
-      window.__htmlbgHasHost = true;
-      renderFileSlots();
-      renderHtmlPick();
-    }
+    window.__htmlbgHasHost = true;
+    syncHostAwareUi();
     return "ok";
   };
+
+  // 兜底巡检：只要宿主标志与实际渲染时用的值不一致就重画一次。
+  // 保证「选择本地 HTML 文件」和「文件导入」的按钮形态始终一致。
+  var renderedHostFlag = null;
+  function syncHostAwareUi() {
+    if (renderedHostFlag === window.__htmlbgHasHost) return;
+    renderedHostFlag = window.__htmlbgHasHost;
+    renderFileSlots();
+    renderHtmlPick();
+  }
+  setInterval(syncHostAwareUi, 400);
 
   // 宿主处理完一条消息后调用，恢复标题以便下一条能被识别为变化
   window.__htmlbgAck = function () {
@@ -414,6 +426,7 @@
     box.appendChild(fallback);
 
     if (window.__htmlbgHasHost) {
+      // 与文件导入槽位一模一样：整行宽的「选择文件」按钮，宿主弹原生对话框
       var choose = document.createElement("button");
       choose.className = "btn slot-choose";
       choose.textContent = "选择文件";
@@ -437,6 +450,26 @@
     }
   }
 
+  // 与槽位卡片一致的状态行：告诉用户当前壁纸到底在用哪个来源
+  function setFileState() {
+    var el = $("fileState");
+    if (!el) return;
+    var s = state.source || {};
+    var txt = "", cls = "";
+    if (s.type === "file" && s.file) {
+      txt = "已加载：" + String(s.file).replace(/^.*[\\\/]/, "");
+      cls = "ok";
+    } else if (s.type === "code" && s.html) {
+      txt = "当前用的是「HTML 代码」里的内容";
+    } else if (s.type === "url" && s.url) {
+      txt = "当前用的是网址来源";
+    } else {
+      txt = "未加载文件（内置动画）";
+    }
+    el.textContent = txt;
+    el.className = "slot-state " + cls;
+  }
+
   function loadFilePath() {
     var v = $("filePath").value.trim();
     if (!v) return;
@@ -448,6 +481,8 @@
     }
     state.source = { type: "file", url: "", file: v, html: "", _blobUrl: null };
     save();
+    setFileState();
+    window.__htmlbgSay("已加载：" + v.replace(/^.*[\\\/]/, ""));
   }
 
   function applyCode() {
@@ -504,6 +539,7 @@
     $("urlInput").value = (state.source.url || "");
     $("codeInput").value = (state.source.html || "");
     $("filePath").value = (state.source.file || "");
+    setFileState();
     var t = state.source.type;
     if (t !== "url" && t !== "file" && t !== "code") t = "builtin";
     setTab(t);
@@ -696,6 +732,13 @@
     $("urlInput").addEventListener("keydown", function (e) { if (e.key === "Enter") loadUrl(); });
     renderHtmlPick();
     $("loadFile").addEventListener("click", loadFilePath);
+    $("filePath").addEventListener("keydown", function (e) { if (e.key === "Enter") loadFilePath(); });
+    $("clearFile").addEventListener("click", function () {
+      $("filePath").value = "";
+      useBuiltin();
+      setFileState();
+      window.__htmlbgSay("已清除本地文件来源，回到内置动画");
+    });
     $("applyCode").addEventListener("click", applyCode);
     $("useBuiltin").addEventListener("click", useBuiltin);
     $("exportBtn").addEventListener("click", exportConfig);

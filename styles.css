@@ -393,6 +393,8 @@ input[type="range"] {
 .slot-item .slot-file-wrap { margin: 2px 0 2px; }
 .slot-item .slot-choose { margin-top: 4px; }
 .slot-item .slot-path-input { margin-top: 4px; }
+.slot-item .config-actions { margin-top: 10px; }
+.slot-file-wrap input[type="file"] { width: 100%; margin-top: 4px; }
 .slot-state { font-size: 11px; color: var(--muted); margin-top: 8px; }
 .slot-state.ok { color: #4ade80; }
 .slot-state.bad { color: #ff6b6b; }
