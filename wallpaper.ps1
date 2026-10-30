@@ -438,6 +438,12 @@ function Invoke-HostMessage {
       # localStorage for file:// pages (measured), so the host is the only bridge to
       # the wallpaper page.
       $json = [System.Uri]::UnescapeDataString($Payload)
+      # Persist settings-window changes to config.json.  The page reports its full
+      # config on every change (and once at startup).  Mark the in-memory config dirty
+      # so the debounced writer at the bottom of the loop flushes it to disk.  Skip the
+      # case where the page just echoes the already-saved config back unchanged, so we
+      # don't rewrite the file on every startup / focus change.
+      if (-not $script:Config -or $script:Config -ne $json) { $script:CfgDirtyAt = Get-Date }
       $script:Config = $json
       $script:CfgCount++
       if ($script:CfgCount -le 5) { Write-Host "config forwarded to wallpaper (#$($script:CfgCount), $($json.Length) bytes)" }
@@ -725,6 +731,15 @@ function Open-SettingsWindow {
 function Invoke-Quit {
   if ($script:Timer) { $script:Timer.Stop() }
   if ($script:ResizeTimer) { $script:ResizeTimer.Stop() }
+  # Flush any pending config write that hasn't hit the 1.5s debounce yet, otherwise
+  # the last setting the user touched right before quitting would be lost on disk.
+  if ($script:CfgDirtyAt -and $script:Config) {
+    try {
+      Set-Content -Path (Join-Path $ScriptDir 'config.json') -Value $script:Config -Encoding UTF8
+      Write-Host 'config.json flushed on quit'
+    } catch { Write-Host "config flush failed: $($_.Exception.Message)" }
+    $script:CfgDirtyAt = $null
+  }
   Restore-ClipChildren
   Close-BrowserWindow $script:SettingsRec
   Close-BrowserWindow $script:WallpaperRec
